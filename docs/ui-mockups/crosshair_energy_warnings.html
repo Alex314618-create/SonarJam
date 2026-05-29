@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>SonarJam HUD — 十字准星 / 能量圆 / 警告</title>
+<style>
+  /* === 全局：模拟游戏黑背景 === */
+  body {
+    margin: 0;
+    height: 100vh;
+    background: #050608;
+    color: #c8e8f0;
+    font-family: "DM Mono", "Consolas", monospace;
+    overflow: hidden;
+  }
+
+  /* === 视窗（按 1280×720 设计基准） === */
+  .viewport {
+    position: relative;
+    width: 1280px;
+    height: 720px;
+    margin: 0 auto;
+    background: radial-gradient(circle at center, #0a0c10 0%, #050608 80%);
+  }
+
+  /* ============================================================
+     ELEMENT: crosshair
+     anchor: center
+     data: 静态（无绑定）
+     ============================================================ */
+  .crosshair {
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 2px; height: 2px;
+    transform: translate(-50%, -50%);
+    background: rgba(180, 240, 250, 0.85);
+    box-shadow: 0 0 4px rgba(180, 240, 250, 0.5);
+  }
+  /* 十字准星的四条小臂 */
+  .crosshair::before, .crosshair::after {
+    content: "";
+    position: absolute;
+    background: rgba(180, 240, 250, 0.85);
+  }
+  .crosshair::before {  /* 水平 */
+    left: -6px; top: 0;
+    width: 14px; height: 2px;
+  }
+  .crosshair::after {  /* 垂直 */
+    left: 0; top: -6px;
+    width: 2px; height: 14px;
+  }
+
+  /* ============================================================
+     ELEMENT: energy_ring
+     anchor: center
+     data: energy_ratio (0..1) → 满圆数 = ceil(ratio * 5)
+     表现：十字准星周围上/右/下/左/中 5 个圆环
+     实心蓝 = 有能量，空心 = 没能量
+     ============================================================ */
+  .energy-ring {
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 0; height: 0;  /* 中心点；圆通过子元素的绝对偏移摆 */
+  }
+  .energy-ring .cell {
+    position: absolute;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(120, 200, 230, 0.5);
+    transform: translate(-50%, -50%);
+    transition: background 200ms ease;
+  }
+  /* 5 个位置：上/右/下/左/中（distance 26px 离中心） */
+  .energy-ring .cell.up    { top: -26px; left: 0;   }
+  .energy-ring .cell.right { top: 0;    left: 26px;}
+  .energy-ring .cell.down  { top: 26px;  left: 0;   }
+  .energy-ring .cell.left  { top: 0;    left: -26px;}
+  .energy-ring .cell.mid   { top: 0;    left: 0;   }  /* 中心，可省略；若用准星就别开 */
+  /* 实心 / 空心状态 */
+  .cell.full {
+    background: rgba(0, 220, 255, 0.85);
+    border-color: rgba(0, 240, 255, 1.0);
+    box-shadow: 0 0 8px rgba(0, 200, 255, 0.6);
+  }
+  .cell.empty {
+    background: transparent;
+    border-color: rgba(80, 130, 160, 0.4);
+  }
+
+  /* ============================================================
+     ELEMENT: warning_banner
+     anchor: top-center  offset (0, 60)
+     data: 来自 warnings 队列；新警告从 0 透明度淡入到 1，停留 4s 后淡出
+     ============================================================ */
+  .warning-banner {
+    position: absolute;
+    left: 50%;
+    top: 60px;
+    transform: translateX(-50%);
+    padding: 8px 18px;
+    background: rgba(20, 8, 6, 0.7);
+    border: 1px solid rgba(220, 60, 50, 0.6);
+    border-radius: 2px;
+    color: rgba(255, 180, 175, 0.95);
+    font-size: 14px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    box-shadow: 0 0 12px rgba(220, 60, 50, 0.35);
+    animation: warning-pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes warning-pulse {
+    0%, 100% { opacity: 0.95; }
+    50%      { opacity: 0.6;  }
+  }
+
+  /* ============================================================
+     ELEMENT: status_log (小字，左下角，叠加多条)
+     anchor: bottom-left offset (24, -24)
+     data: 来自 system_log 队列，新条目顶部 push，旧的褪色淡出
+     ============================================================ */
+  .status-log {
+    position: absolute;
+    left: 24px;
+    bottom: 24px;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    color: rgba(140, 200, 220, 0.6);
+    line-height: 1.5;
+  }
+  .status-log .line   { opacity: 1.0; }
+  .status-log .line.dim { opacity: 0.4; }
+  .status-log .line.faded { opacity: 0.15; }
+
+  /* 标签 */
+  .label { position: absolute; font-size: 10px; color: rgba(120,160,180,0.4); }
+</style>
+</head>
+<body>
+  <div class="viewport">
+
+    <!-- ============================================================
+         十字准星
+         ============================================================ -->
+    <div class="crosshair"></div>
+
+    <!-- ============================================================
+         能量圆：5 个，对应 energy_ratio。
+         运行时按 ratio 决定哪几个是 .full / .empty。
+         规则：满圆数 = ceil(ratio * 5)。从 mid 开始填？或从 up 开始填？
+         PA 决定填充顺序：（下面是从中心向四周扩散的示意）
+         ratio=1.0 → 全 full
+         ratio=0.8 → up/right/down/left full, mid empty (示意，按设计调)
+         ============================================================ -->
+    <div class="energy-ring">
+      <div class="cell up    full"></div>
+      <div class="cell right full"></div>
+      <div class="cell down  full"></div>
+      <div class="cell left  full"></div>
+      <div class="cell mid   full"></div>
+    </div>
+
+    <!-- ============================================================
+         警告横幅（顶部中央）
+         data: warnings 队列
+         ============================================================ -->
+    <div class="warning-banner">外部供电断裂 · 切换至内部电池</div>
+
+    <!-- ============================================================
+         状态日志（左下，多行叠加）
+         data: system_log 队列；新的在上、旧的褪色
+         ============================================================ -->
+    <div class="status-log">
+      <div class="line">&gt; SONAR v0.7 · 感知协议已加载</div>
+      <div class="line dim">&gt; 光学通道：屏蔽</div>
+      <div class="line dim">&gt; 声学通道：开放</div>
+      <div class="line faded">&gt; 威胁标记引擎：激活</div>
+    </div>
+
+  </div>
+</body>
+</html>

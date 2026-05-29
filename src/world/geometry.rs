@@ -16,6 +16,58 @@ pub enum Surface {
     Wall,
     Floor,
     Ceiling,
+    /// P_* 几何：人形/按钮/提示/标识等"过去的回声/异常建构"，
+    /// 显形颜色由对象名编码（见 PhantomColor）。
+    Phantom(PhantomColor),
+}
+
+/// 通过 Blender 对象名前缀 `P_<kind>_<color>_<id>` 编码的显形颜色。
+/// 命中时点云颜色 = base ± 10%。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PhantomColor {
+    Red,
+    Yellow,
+    Silver,
+    Cyan,
+    Purple,
+    Orange,
+    Green,
+    White,
+}
+
+impl PhantomColor {
+    /// 从对象名中识别颜色 token。匹配规则：用 `_` 分割后查找已知颜色单词。
+    /// 没找到返回 None，调用者决定默认（当前默认 Red）。
+    pub fn parse(name: &str) -> Option<Self> {
+        for token in name.split('_') {
+            match token {
+                "red" => return Some(Self::Red),
+                "yellow" => return Some(Self::Yellow),
+                "silver" => return Some(Self::Silver),
+                "cyan" => return Some(Self::Cyan),
+                "purple" => return Some(Self::Purple),
+                "orange" => return Some(Self::Orange),
+                "green" => return Some(Self::Green),
+                "white" => return Some(Self::White),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// 基色 (r, g, b)；声呐 color_for 在此基础上 ±10% 抖动。
+    pub fn base_rgb(self) -> (f32, f32, f32) {
+        match self {
+            Self::Red => (0.95, 0.18, 0.22),
+            Self::Yellow => (0.98, 0.85, 0.18),
+            Self::Silver => (0.78, 0.80, 0.84),
+            Self::Cyan => (0.18, 0.92, 0.95),
+            Self::Purple => (0.62, 0.20, 0.85),
+            Self::Orange => (0.98, 0.55, 0.15),
+            Self::Green => (0.20, 0.92, 0.40),
+            Self::White => (0.95, 0.95, 0.95),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -55,22 +107,30 @@ impl Tri {
 pub struct World {
     render_tris: Vec<Tri>,    // 声呐 raycast
     collision_tris: Vec<Tri>, // 玩家碰撞
+    phantom_tris: Vec<Tri>,   // 人形等"过去回声"——只参与 raycast，不参与碰撞
     spawn: Vec3,
 }
 
 impl World {
     pub fn new() -> Self {
-        if let Some(level) = crate::content::load(DEFAULT_LEVEL) {
+        Self::load(DEFAULT_LEVEL)
+    }
+
+    /// 按路径加载一张 GLB；失败则回退代码盒子房间。
+    pub fn load(path: &str) -> Self {
+        if let Some(level) = crate::content::load(path) {
             if !level.render_tris.is_empty() {
                 println!(
-                    "[world] GLB 关卡已加载：render {} 三角形，collision {} 三角形",
+                    "[world] GLB 加载 {}: render {} / collision {} / phantom {} 三角形",
+                    path,
                     level.render_tris.len(),
-                    level.collision_tris.len()
+                    level.collision_tris.len(),
+                    level.phantom_tris.len()
                 );
                 return Self::from_level(level);
             }
         }
-        println!("[world] 未找到 GLB 关卡，回退到代码盒子房间");
+        println!("[world] 未找到 GLB ({})，回退到代码盒子房间", path);
         Self::code_room()
     }
 
@@ -80,7 +140,6 @@ impl World {
             .iter()
             .map(|t| Tri::new(t[0], t[1], t[2]))
             .collect();
-        // 没有 Collision 网格时退而用 Render 几何兜底碰撞。
         let collision_src = if level.collision_tris.is_empty() {
             &level.render_tris
         } else {
@@ -90,10 +149,16 @@ impl World {
             .iter()
             .map(|t| Tri::new(t[0], t[1], t[2]))
             .collect();
+        let phantom_tris: Vec<Tri> = level
+            .phantom_tris
+            .iter()
+            .map(|(color, t)| Tri::with_surface(t[0], t[1], t[2], Surface::Phantom(*color)))
+            .collect();
         let spawn = level.spawn.unwrap_or_else(|| vec3(0.0, PLAYER_HEIGHT, 0.0));
         Self {
             render_tris,
             collision_tris,
+            phantom_tris,
             spawn,
         }
     }
@@ -114,6 +179,7 @@ impl World {
         Self {
             render_tris: tris.clone(),
             collision_tris: tris,
+            phantom_tris: Vec::new(),
             spawn: v(0.0, PLAYER_HEIGHT, 0.0),
         }
     }
@@ -128,20 +194,25 @@ impl World {
         self.render_tris.iter().map(|t| [t.a, t.b, t.c])
     }
 
-    /// 声呐射线对 Render 几何求最近正向命中。
+    /// 声呐射线对 Render + Phantom 几何求最近正向命中。
+    /// 两套几何竞争同一条射线的最近距离——phantom 在玩家与墙之间会先被命中。
     pub fn raycast(&self, origin: Vec3, dir: Vec3, max_range: f32) -> Option<Hit> {
         let mut best: Option<Hit> = None;
-        for t in &self.render_tris {
-            if let Some(dist) = ray_tri(origin, dir, t.a, t.b, t.c) {
-                if dist <= max_range && best.map_or(true, |h| dist < h.distance) {
-                    best = Some(Hit {
-                        pos: origin + dir * dist,
-                        surface: t.surface,
-                        distance: dist,
-                    });
+        let consider = |tris: &[Tri], best: &mut Option<Hit>| {
+            for t in tris {
+                if let Some(dist) = ray_tri(origin, dir, t.a, t.b, t.c) {
+                    if dist <= max_range && best.map_or(true, |h: Hit| dist < h.distance) {
+                        *best = Some(Hit {
+                            pos: origin + dir * dist,
+                            surface: t.surface,
+                            distance: dist,
+                        });
+                    }
                 }
             }
-        }
+        };
+        consider(&self.render_tris, &mut best);
+        consider(&self.phantom_tris, &mut best);
         best
     }
 

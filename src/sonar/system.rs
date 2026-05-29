@@ -188,5 +188,15 @@ fn color_for(surface: Surface) -> Color {
         Surface::Wall => Color::new(0.25, gen_range(0.75f32, 1.0), gen_range(0.85f32, 1.0), 1.0),
         Surface::Floor => Color::new(0.10, gen_range(0.70f32, 0.9), gen_range(0.55f32, 0.75), 1.0),
         Surface::Ceiling => Color::new(0.30, gen_range(0.60f32, 0.8), gen_range(0.90f32, 1.0), 1.0),
+        // Phantom：基色由 Blender 对象名编码（P_<kind>_<color>_<id>），±10% 抖动。
+        Surface::Phantom(c) => {
+            let (r, g, b) = c.base_rgb();
+            Color::new(jitter10(r), jitter10(g), jitter10(b), 1.0)
+        }
     }
+}
+
+/// 在 base 值上做 ±10% 抖动，并 clamp 到 [0,1]。
+fn jitter10(base: f32) -> f32 {
+    (base + gen_range(-0.1f32, 0.1) * base).clamp(0.0, 1.0)
 }
