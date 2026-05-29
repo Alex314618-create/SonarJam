@@ -141,6 +141,181 @@ def create_empty(
     return obj
 
 
+def add_locker_bank(render_col, slug: str, center: Vector, count: int, width: float = 2.2, depth: float = 0.75, height: float = 2.3):
+    body = cube(render_col, f"R_{slug}_body", center, Vector((width, depth, height)))
+    unit_w = width / count
+    # slightly inset face to create real door rhythm
+    for i in range(count):
+        x = center.x - width * 0.5 + unit_w * (i + 0.5)
+        cube(render_col, f"R_{slug}_door_{i:02d}", Vector((x, center.y + depth * 0.48, center.z)), Vector((unit_w * 0.86, 0.05, height * 0.92)))
+        cube(render_col, f"R_{slug}_vent_{i:02d}_a", Vector((x, center.y + depth * 0.51, center.z + 0.55)), Vector((unit_w * 0.45, 0.02, 0.03)))
+        cube(render_col, f"R_{slug}_vent_{i:02d}_b", Vector((x, center.y + depth * 0.51, center.z + 0.40)), Vector((unit_w * 0.45, 0.02, 0.03)))
+        cube(render_col, f"R_{slug}_handle_{i:02d}", Vector((x + unit_w * 0.28, center.y + depth * 0.53, center.z + 0.05)), Vector((0.03, 0.03, 0.28)))
+    cube(render_col, f"R_{slug}_plinth", Vector((center.x, center.y, center.z - height * 0.5 - 0.05)), Vector((width * 0.98, depth * 0.96, 0.10)))
+    return body
+
+
+def add_console(render_col, slug: str, center: Vector, width: float = 1.8, depth: float = 0.9, height: float = 1.9):
+    cube(render_col, f"R_{slug}_pedestal", Vector((center.x, center.y, center.z - 0.35)), Vector((width * 0.75, depth * 0.72, height * 0.45)))
+    cube(render_col, f"R_{slug}_screen", Vector((center.x, center.y + depth * 0.15, center.z + 0.45)), Vector((width, depth * 0.35, height * 0.45)))
+    cube(render_col, f"R_{slug}_panel_left", Vector((center.x - width * 0.33, center.y + depth * 0.42, center.z + 0.05)), Vector((0.12, 0.08, 0.35)))
+    cube(render_col, f"R_{slug}_panel_right", Vector((center.x + width * 0.33, center.y + depth * 0.42, center.z + 0.02)), Vector((0.12, 0.08, 0.30)))
+    cube(render_col, f"R_{slug}_base", Vector((center.x, center.y, center.z - height * 0.5)), Vector((width * 0.58, depth * 0.52, 0.12)))
+
+
+def add_workbench(render_col, slug: str, center: Vector, width: float = 2.6, depth: float = 0.9, height: float = 1.0):
+    top_z = center.z + height * 0.5 - 0.08
+    leg_z = center.z - 0.05
+    cube(render_col, f"R_{slug}_top", Vector((center.x, center.y, top_z)), Vector((width, depth, 0.16)))
+    for sx in (-0.42, 0.42):
+        for sy in (-0.35, 0.35):
+            cube(render_col, f"R_{slug}_leg_{'l' if sx < 0 else 'r'}_{'f' if sy > 0 else 'b'}", Vector((center.x + width * sx, center.y + depth * sy, leg_z)), Vector((0.10, 0.10, height * 0.82)))
+    cube(render_col, f"R_{slug}_undershelf", Vector((center.x, center.y, center.z - 0.18)), Vector((width * 0.82, depth * 0.72, 0.08)))
+    cube(render_col, f"R_{slug}_backboard", Vector((center.x, center.y - depth * 0.45, center.z + 0.45)), Vector((width * 0.92, 0.05, 0.7)))
+
+
+def add_shelf_rack(render_col, slug: str, center: Vector, width: float = 1.0, depth: float = 2.2, height: float = 2.5, levels: int = 4):
+    half_w = width * 0.5
+    half_d = depth * 0.5
+    leg_h = height
+    for sx in (-half_w + 0.06, half_w - 0.06):
+        for sy in (-half_d + 0.06, half_d - 0.06):
+            cube(render_col, f"R_{slug}_upright_{'l' if sx < 0 else 'r'}_{'f' if sy > 0 else 'b'}", Vector((center.x + sx, center.y + sy, center.z)), Vector((0.08, 0.08, leg_h)))
+    for i in range(levels):
+        z = center.z - height * 0.5 + 0.18 + i * ((height - 0.36) / max(1, levels - 1))
+        cube(render_col, f"R_{slug}_shelf_{i:02d}", Vector((center.x, center.y, z)), Vector((width, depth, 0.08)))
+
+
+def add_crate_stack(render_col, slug: str, center: Vector, dims):
+    # dims: list of (offset, size)
+    for idx, (offset, size) in enumerate(dims):
+        c = Vector((center.x + offset.x, center.y + offset.y, center.z + offset.z))
+        cube(render_col, f"R_{slug}_crate_{idx:02d}", c, size)
+        cube(render_col, f"R_{slug}_bandx_{idx:02d}", Vector((c.x, c.y, c.z)), Vector((size.x * 0.10, size.y * 1.02, size.z * 1.02)))
+        cube(render_col, f"R_{slug}_bandy_{idx:02d}", Vector((c.x, c.y, c.z)), Vector((size.x * 1.02, size.y * 0.10, size.z * 1.02)))
+
+
+def add_bunk_bed(render_col, slug: str, center: Vector, width: float = 2.4, depth: float = 0.95, height: float = 2.0):
+    post_h = height
+    for sx in (-width * 0.45, width * 0.45):
+        for sy in (-depth * 0.42, depth * 0.42):
+            cube(render_col, f"R_{slug}_post_{'l' if sx < 0 else 'r'}_{'f' if sy > 0 else 'b'}", Vector((center.x + sx, center.y + sy, center.z + 0.1)), Vector((0.08, 0.08, post_h)))
+    for level, zoff in (("low", 0.18), ("high", 1.18)):
+        cube(render_col, f"R_{slug}_{level}_frame", Vector((center.x, center.y, center.z - 0.35 + zoff)), Vector((width, depth, 0.10)))
+        cube(render_col, f"R_{slug}_{level}_mattress", Vector((center.x, center.y, center.z - 0.26 + zoff)), Vector((width * 0.92, depth * 0.84, 0.16)))
+    # ladder
+    ladder_x = center.x + width * 0.50
+    cube(render_col, f"R_{slug}_ladder_l", Vector((ladder_x, center.y - 0.20, center.z + 0.15)), Vector((0.05, 0.05, 1.7)))
+    cube(render_col, f"R_{slug}_ladder_r", Vector((ladder_x, center.y + 0.20, center.z + 0.15)), Vector((0.05, 0.05, 1.7)))
+    for i in range(4):
+        z = center.z - 0.45 + 0.35 * i
+        cube(render_col, f"R_{slug}_ladder_step_{i:02d}", Vector((ladder_x, center.y, z)), Vector((0.05, 0.42, 0.03)))
+
+
+def add_tank_assembly(render_col, slug: str, center: Vector, radius: float = 1.1, height: float = 5.2):
+    create_cylinder(render_col, f"R_{slug}_body", center, radius=radius, depth=height)
+    create_cylinder(render_col, f"R_{slug}_cap_top", Vector((center.x, center.y, center.z + height * 0.48)), radius=radius * 0.92, depth=0.18)
+    create_cylinder(render_col, f"R_{slug}_cap_bot", Vector((center.x, center.y, center.z - height * 0.48)), radius=radius * 0.92, depth=0.18)
+    create_cylinder(render_col, f"R_{slug}_ring_top", Vector((center.x, center.y, center.z + height * 0.20)), radius=radius * 1.02, depth=0.08)
+    create_cylinder(render_col, f"R_{slug}_ring_mid", Vector((center.x, center.y, center.z)), radius=radius * 1.02, depth=0.08)
+    create_cylinder(render_col, f"R_{slug}_ring_bot", Vector((center.x, center.y, center.z - height * 0.20)), radius=radius * 1.02, depth=0.08)
+    for sx in (-0.55, 0.55):
+        for sy in (-0.55, 0.55):
+            cube(render_col, f"R_{slug}_foot_{'n' if sy > 0 else 's'}_{'l' if sx < 0 else 'r'}", Vector((center.x + sx, center.y + sy, center.z - height * 0.5 - 0.3)), Vector((0.14, 0.14, 0.6)))
+    # access ladder
+    lx = center.x + radius + 0.12
+    cube(render_col, f"R_{slug}_ladder_l", Vector((lx, center.y - 0.18, center.z)), Vector((0.05, 0.05, height * 0.9)))
+    cube(render_col, f"R_{slug}_ladder_r", Vector((lx, center.y + 0.18, center.z)), Vector((0.05, 0.05, height * 0.9)))
+    for i in range(6):
+        z = center.z - height * 0.35 + i * (height * 0.12)
+        cube(render_col, f"R_{slug}_ladder_step_{i:02d}", Vector((lx, center.y, z)), Vector((0.04, 0.34, 0.03)))
+
+
+def add_pipe_run(render_col, slug: str, start: Vector, end: Vector, radius: float = 0.12, supports=3):
+    delta = end - start
+    if abs(delta.x) >= abs(delta.y):
+        center = (start + end) * 0.5
+        create_cylinder(render_col, f"R_{slug}_pipe", center, radius=radius, depth=abs(delta.x), rotation=(0.0, radians(90), 0.0), vertices=10)
+        for i in range(supports):
+            t = i / max(1, supports - 1)
+            x = start.x + delta.x * t
+            cube(render_col, f"R_{slug}_support_{i:02d}", Vector((x, start.y, start.z - 0.45)), Vector((0.10, 0.10, 0.9)))
+    else:
+        center = (start + end) * 0.5
+        create_cylinder(render_col, f"R_{slug}_pipe", center, radius=radius, depth=abs(delta.y), rotation=(radians(90), 0.0, 0.0), vertices=10)
+        for i in range(supports):
+            t = i / max(1, supports - 1)
+            y = start.y + delta.y * t
+            cube(render_col, f"R_{slug}_support_{i:02d}", Vector((start.x, y, start.z - 0.45)), Vector((0.10, 0.10, 0.9)))
+
+
+def add_partition_frame(render_col, slug: str, center: Vector, size: Vector):
+    cube(render_col, f"R_{slug}_panel", center, size)
+    cube(render_col, f"R_{slug}_top", Vector((center.x, center.y, center.z + size.z * 0.5)), Vector((size.x + 0.08, size.y + 0.08, 0.08)))
+    cube(render_col, f"R_{slug}_bot", Vector((center.x, center.y, center.z - size.z * 0.5)), Vector((size.x + 0.08, size.y + 0.08, 0.08)))
+
+
+def bounds_world(obj):
+    corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+    mins = Vector((min(c.x for c in corners), min(c.y for c in corners), min(c.z for c in corners)))
+    maxs = Vector((max(c.x for c in corners), max(c.y for c in corners), max(c.z for c in corners)))
+    return mins, maxs
+
+
+def point_inside_aabb(point: Vector, mins: Vector, maxs: Vector, pad_xy=0.0, pad_z=0.0) -> bool:
+    return (
+        mins.x - pad_xy <= point.x <= maxs.x + pad_xy
+        and mins.y - pad_xy <= point.y <= maxs.y + pad_xy
+        and mins.z - pad_z <= point.z <= maxs.z + pad_z
+    )
+
+
+def check_markers_not_in_collision(markers_col, collision_col):
+    issues = []
+    colliders = [(obj.name, *bounds_world(obj)) for obj in collision_col.objects if obj.type == "MESH"]
+    for marker in markers_col.objects:
+        p = marker.location.copy()
+        for name, mins, maxs in colliders:
+            if point_inside_aabb(p, mins, maxs, pad_xy=-0.01, pad_z=-0.01):
+                issues.append(f"Marker {marker.name} intersects collision object {name}")
+                break
+    return issues
+
+
+def sample_segment_clear(collision_col, a: Vector, b: Vector, z: float = 1.0, samples: int = 36):
+    colliders = [(obj.name, *bounds_world(obj)) for obj in collision_col.objects if obj.type == "MESH"]
+    for i in range(samples + 1):
+        t = i / samples
+        p = a.lerp(b, t)
+        p.z = z
+        for name, mins, maxs in colliders:
+            if point_inside_aabb(p, mins, maxs, pad_xy=0.0, pad_z=0.0):
+                # ignore floors below foot level
+                if maxs.z < 0.35:
+                    continue
+                return name, p.copy()
+    return None, None
+
+
+def validate_key_paths(collision_col):
+    issues = []
+    paths = [
+        ("spawn_to_gallery", [Vector((-40.0, 0.0, 1.0)), Vector((-24.0, 0.0, 1.0)), Vector((-12.0, 0.0, 1.0))]),
+        ("gallery_to_hub", [Vector((-12.0, 0.0, 1.0)), Vector((-7.0, 0.0, 1.0)), Vector((0.0, 0.0, 1.0))]),
+        ("hub_to_east", [Vector((0.0, 0.0, 1.0)), Vector((10.0, 0.0, 1.0)), Vector((18.0, 0.0, 1.0))]),
+        ("hub_to_north", [Vector((0.0, 0.0, 1.0)), Vector((0.0, 14.0, 1.0)), Vector((0.0, 23.0, 1.0))]),
+        ("hub_to_service", [Vector((0.0, 0.0, 1.0)), Vector((0.0, -15.0, 1.0)), Vector((0.0, -22.0, 1.0))]),
+        ("service_to_west", [Vector((0.0, -22.0, 1.0)), Vector((-18.0, -22.0, 1.0)), Vector((-18.0, -17.0, 1.0)), Vector((-18.0, -10.0, 1.0))]),
+    ]
+    for path_name, nodes in paths:
+        for a, b in zip(nodes, nodes[1:]):
+            name, pt = sample_segment_clear(collision_col, a, b, z=1.0)
+            if name:
+                issues.append(f"Path {path_name} blocked by {name} near ({pt.x:.2f}, {pt.y:.2f}, {pt.z:.2f})")
+                break
+    return issues
+
+
 def add_floor(render_col, collision_col, slug: str, center: Vector, size_xy: Vector, floor_z: float):
     loc = Vector((center.x, center.y, floor_z - FLOOR * 0.5))
     size = Vector((size_xy.x, size_xy.y, FLOOR))
@@ -329,13 +504,17 @@ def add_catwalk_ring(render_col, collision_col):
 
 def add_industrial_dressing(render_col):
     # Airlock
-    create_cube(render_col, "R_airlock_locker_bank", Vector((-41.2, 1.6, 1.2)), Vector((0.8, 2.2, 2.4)))
-    create_cube(render_col, "R_airlock_console", Vector((-36.4, -1.5, 1.0)), Vector((1.0, 0.6, 2.0)))
+    add_locker_bank(render_col, "airlock_locker_bank", Vector((-41.2, 1.6, 1.15)), count=3, width=2.1, depth=0.72, height=2.3)
+    add_console(render_col, "airlock_console", Vector((-36.4, -1.5, 1.0)), width=1.2, depth=0.75, height=1.8)
+    create_cube(render_col, "R_airlock_bench", Vector((-39.0, -1.9, 0.45)), Vector((2.0, 0.55, 0.90)))
+    create_cube(render_col, "R_airlock_pipe_drop", Vector((-42.4, 0.0, 3.2)), Vector((0.28, 0.28, 1.6)))
 
     # Gallery ribs and duct
     for i, x in enumerate([-31.0, -27.0, -23.0, -19.0, -15.0]):
         create_cube(render_col, f"R_gallery_rib_{i:02d}", Vector((x, 0.0, 2.0)), Vector((0.18, 3.8, 4.0)))
     create_cube(render_col, "R_gallery_duct", Vector((-24.0, 0.0, 3.55)), Vector((22.0, 0.8, 0.6)))
+    for x in [-29.0, -21.0, -13.0]:
+        add_pipe_run(render_col, f"gallery_pipe_{int(x)}", Vector((x, -1.2, 2.9)), Vector((x, 1.2, 2.9)), radius=0.08, supports=2)
 
     # Tank hall landmarks
     hall_tanks = [
@@ -345,44 +524,56 @@ def add_industrial_dressing(render_col):
         ("hall_tank_d", Vector((6.0, -5.5, 2.6))),
     ]
     for slug, loc in hall_tanks:
-        create_cylinder(render_col, f"R_{slug}", loc, radius=1.1, depth=5.2, sj_id=f"map.{LEVEL_SLUG}.render.{slug}", sj_kind="render_mesh")
+        add_tank_assembly(render_col, slug, loc, radius=1.1, height=5.2)
     create_cube(render_col, "R_hall_bridge_grate", Vector((0.0, 0.0, 0.3)), Vector((5.0, 2.0, 0.2)))
+    add_pipe_run(render_col, "hall_pipe_north", Vector((-9.5, 8.8, 5.5)), Vector((9.5, 8.8, 5.5)), radius=0.12, supports=4)
+    add_pipe_run(render_col, "hall_pipe_south", Vector((-9.5, -8.8, 5.2)), Vector((9.5, -8.8, 5.2)), radius=0.10, supports=4)
+    create_cube(render_col, "R_hall_console_pillar", Vector((0.0, 0.0, 1.35)), Vector((1.1, 1.1, 2.7)))
+    add_console(render_col, "hall_console_east", Vector((2.0, 0.0, 1.0)), width=1.0, depth=0.70, height=1.7)
 
     # Workshops
-    workshop_props = [
-        ("R_workshop_bench_a", Vector((15.2, 2.7, 0.8)), Vector((2.4, 0.8, 1.6))),
-        ("R_workshop_bench_b", Vector((19.2, -2.8, 0.8)), Vector((2.8, 0.8, 1.6))),
-        ("R_workshop_shelf_a", Vector((21.6, 3.2, 1.3)), Vector((0.6, 2.0, 2.6))),
-        ("R_workshop_shelf_b", Vector((13.8, -3.0, 1.3)), Vector((0.6, 2.0, 2.6))),
-        ("R_workshop_crates", Vector((17.4, 0.2, 0.9)), Vector((1.8, 1.6, 1.8))),
-        ("R_workshop_ceiling_tray", Vector((18.0, 0.0, 4.3)), Vector((8.0, 0.45, 0.45))),
-    ]
-    for name, loc, size in workshop_props:
-        create_cube(render_col, name, loc, size)
+    add_workbench(render_col, "workshop_bench_a", Vector((15.2, 2.7, 0.55)), width=2.6, depth=0.85, height=1.1)
+    add_workbench(render_col, "workshop_bench_b", Vector((19.2, -2.8, 0.55)), width=3.0, depth=0.90, height=1.05)
+    add_shelf_rack(render_col, "workshop_shelf_a", Vector((21.6, 3.2, 1.25)), width=0.8, depth=2.0, height=2.5)
+    add_shelf_rack(render_col, "workshop_shelf_b", Vector((13.8, -3.0, 1.25)), width=0.8, depth=2.0, height=2.5)
+    add_crate_stack(
+        render_col,
+        "workshop_crates",
+        Vector((17.2, 0.3, 0.55)),
+        [
+            (Vector((-0.45, 0.0, 0.0)), Vector((0.95, 0.95, 1.10))),
+            (Vector((0.55, 0.0, 0.0)), Vector((1.05, 1.05, 1.10))),
+            (Vector((0.0, 0.1, 1.05)), Vector((0.88, 0.88, 0.95))),
+        ],
+    )
+    create_cube(render_col, "R_workshop_ceiling_tray", Vector((18.0, 0.0, 4.3)), Vector((8.0, 0.45, 0.45)))
+    add_pipe_run(render_col, "workshop_pipe_a", Vector((14.0, 4.2, 3.9)), Vector((22.0, 4.2, 3.9)), radius=0.08, supports=3)
+    add_console(render_col, "workshop_wall_console", Vector((22.6, -0.2, 1.0)), width=0.9, depth=0.55, height=1.6)
 
     # Quarters
-    quarters_props = [
-        ("R_quarters_bunk_a_low", Vector((-20.5, -8.0, 0.5)), Vector((2.4, 0.9, 0.6))),
-        ("R_quarters_bunk_a_high", Vector((-20.5, -8.0, 1.5)), Vector((2.4, 0.9, 0.6))),
-        ("R_quarters_bunk_b_low", Vector((-15.2, -11.4, 0.5)), Vector((2.4, 0.9, 0.6))),
-        ("R_quarters_bunk_b_high", Vector((-15.2, -11.4, 1.5)), Vector((2.4, 0.9, 0.6))),
-        ("R_quarters_lockers", Vector((-13.6, -8.0, 1.2)), Vector((0.8, 2.4, 2.4))),
-        ("R_quarters_med_table", Vector((-17.8, -12.2, 0.75)), Vector((1.4, 0.8, 1.5))),
-        ("R_quarters_partition", Vector((-18.0, -9.7, 1.5)), Vector((0.15, 4.6, 3.0))),
-    ]
-    for name, loc, size in quarters_props:
-        create_cube(render_col, name, loc, size)
+    add_bunk_bed(render_col, "quarters_bunk_a", Vector((-20.5, -8.0, 1.0)), width=2.4, depth=0.95, height=2.0)
+    add_bunk_bed(render_col, "quarters_bunk_b", Vector((-15.2, -11.4, 1.0)), width=2.4, depth=0.95, height=2.0)
+    add_locker_bank(render_col, "quarters_lockers", Vector((-13.6, -8.0, 1.15)), count=3, width=2.1, depth=0.72, height=2.3)
+    add_workbench(render_col, "quarters_med_table", Vector((-17.8, -12.2, 0.55)), width=1.6, depth=0.8, height=0.95)
+    add_partition_frame(render_col, "quarters_partition", Vector((-18.0, -9.7, 1.5)), Vector((0.12, 4.6, 3.0)))
+    create_cube(render_col, "R_quarters_curtain_rod", Vector((-18.0, -9.7, 2.85)), Vector((0.08, 4.8, 0.08)))
 
     # Pump room
-    create_cylinder(render_col, "R_pump_core_a", Vector((-1.6, 22.0, 1.9)), radius=0.8, depth=3.8)
-    create_cylinder(render_col, "R_pump_core_b", Vector((1.6, 22.0, 1.9)), radius=0.8, depth=3.8)
-    create_cube(render_col, "R_pump_control_bank", Vector((0.0, 19.2, 1.2)), Vector((4.0, 0.8, 2.4)))
-    create_cube(render_col, "R_pump_pipe_run", Vector((0.0, 24.0, 4.8)), Vector((7.0, 0.5, 0.5)))
+    add_tank_assembly(render_col, "pump_core_a", Vector((-1.6, 22.0, 1.9)), radius=0.8, height=3.8)
+    add_tank_assembly(render_col, "pump_core_b", Vector((1.6, 22.0, 1.9)), radius=0.8, height=3.8)
+    add_console(render_col, "pump_control_bank", Vector((0.0, 19.2, 1.2)), width=4.0, depth=0.8, height=2.2)
+    add_pipe_run(render_col, "pump_pipe_run_top", Vector((-3.5, 24.0, 4.8)), Vector((3.5, 24.0, 4.8)), radius=0.11, supports=4)
+    add_pipe_run(render_col, "pump_pipe_vertical_left", Vector((-3.2, 24.0, 4.0)), Vector((-3.2, 20.5, 4.0)), radius=0.09, supports=2)
+    add_pipe_run(render_col, "pump_pipe_vertical_right", Vector((3.2, 24.0, 4.0)), Vector((3.2, 20.5, 4.0)), radius=0.09, supports=2)
+    create_cube(render_col, "R_pump_grate_platform", Vector((0.0, 22.0, 0.25)), Vector((5.4, 4.2, 0.15)))
 
     # Service loop
     for idx, x in enumerate([-12.0, -4.0, 4.0, 12.0]):
-        create_cube(render_col, f"R_service_pipe_{idx:02d}", Vector((x, -22.0, 2.5)), Vector((0.4, 3.0, 0.4)))
-    create_cube(render_col, "R_service_junction", Vector((18.0, -15.5, 1.2)), Vector((1.2, 0.8, 2.4)))
+        add_pipe_run(render_col, f"service_pipe_{idx:02d}", Vector((x, -23.4, 2.5)), Vector((x, -20.6, 2.5)), radius=0.10, supports=2)
+    create_cube(render_col, "R_service_junction_body", Vector((18.0, -15.5, 1.2)), Vector((1.2, 0.8, 2.4)))
+    create_cube(render_col, "R_service_junction_face", Vector((18.0, -15.06, 1.25)), Vector((0.85, 0.05, 1.9)))
+    create_cube(render_col, "R_service_hatch_frame", Vector((-18.0, -17.0, 1.2)), Vector((1.4, 0.10, 2.4)))
+    create_cube(render_col, "R_service_hatch_panel", Vector((-18.0, -16.94, 1.2)), Vector((1.1, 0.04, 2.1)))
 
 
 def build_map(render_col, collision_col, markers_col, volumes_col):
@@ -509,6 +700,18 @@ def build_map(render_col, collision_col, markers_col, volumes_col):
     create_cube(volumes_col, "V_bias_service_false_lead", Vector((18.0, -18.0, 1.5)), Vector((6.0, 3.5, 3.0)), f"map.{LEVEL_SLUG}.volume.bias_service_false_lead", "volume_bias", display_type="WIRE")
 
 
+def run_validation(markers_col, collision_col):
+    issues = []
+    issues.extend(check_markers_not_in_collision(markers_col, collision_col))
+    issues.extend(validate_key_paths(collision_col))
+    if issues:
+        print("=== MVPMap validation issues ===")
+        for issue in issues:
+            print(issue)
+    else:
+        print("=== MVPMap validation passed ===")
+
+
 def configure_scene(scene: bpy.types.Scene):
     scene.unit_settings.system = "METRIC"
     scene.render.fps = 60
@@ -526,6 +729,7 @@ def main():
 
     build_map(render_col, collision_col, markers_col, volumes_col)
     configure_scene(scene)
+    run_validation(markers_col, collision_col)
     print(f"Generated scene '{SCENE_NAME}'")
 
 

@@ -122,6 +122,12 @@ impl World {
         self.spawn
     }
 
+    /// 声呐能打到的真实渲染几何，按三角形给出（用于点云渲染的深度预通道）。
+    /// 几何是静态的，渲染器可缓存一次即可。
+    pub fn render_triangles(&self) -> impl Iterator<Item = [Vec3; 3]> + '_ {
+        self.render_tris.iter().map(|t| [t.a, t.b, t.c])
+    }
+
     /// 声呐射线对 Render 几何求最近正向命中。
     pub fn raycast(&self, origin: Vec3, dir: Vec3, max_range: f32) -> Option<Hit> {
         let mut best: Option<Hit> = None;
