@@ -1,0 +1,14 @@
+# Rust build output
+/target
+
+# Backup / editor artifacts
+**/*.rs.bk
+*.pdb
+.DS_Store
+Thumbs.db
+
+# IDE
+/.idea
+/.vscode
+
+# Note: Cargo.lock is intentionally committed (binary crate).
