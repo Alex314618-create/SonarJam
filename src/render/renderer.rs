@@ -69,16 +69,27 @@ struct Gpu {
     depth_vbo: BufferId,
     depth_ibo: BufferId,
     depth_index_count: i32,
+    depth_capacity: usize, // 预分配的最大顶点数
 }
 
 pub struct Renderer {
     gpu: Option<Gpu>,
+    // 切图时设 dirty，render 开头检测并 buffer_update 重传 depth 几何。
+    world_dirty: bool,
 }
 
 impl Renderer {
     pub fn new() -> Self {
         // GL 资源延迟到首次 render 时创建：那时渲染上下文必定活跃。
-        Self { gpu: None }
+        Self {
+            gpu: None,
+            world_dirty: false,
+        }
+    }
+
+    /// 切换地图后调用：下一帧 render 时会用新 world 的几何重新填充 depth buffer。
+    pub fn reload_world(&mut self) {
+        self.world_dirty = true;
     }
 
     pub fn render(&mut self, camera: &Camera3D, sonar: &Sonar, world: &World) {
@@ -97,8 +108,16 @@ impl Renderer {
             // 懒初始化 GL 资源（含开启 GL_PROGRAM_POINT_SIZE）。
             if self.gpu.is_none() {
                 self.gpu = Some(Gpu::new(ctx, world));
+                self.world_dirty = false;
             }
             let gpu = self.gpu.as_mut().unwrap();
+
+            // 地图切换后：用新 world 的几何重传 depth buffer。
+            if self.world_dirty {
+                gpu.depth_index_count =
+                    upload_world_depth(ctx, gpu.depth_vbo, world, gpu.depth_capacity);
+                self.world_dirty = false;
+            }
 
             ctx.begin_default_pass(macroquad::miniquad::PassAction::Clear {
                 color: Some((CLEAR_COLOR.r, CLEAR_COLOR.g, CLEAR_COLOR.b, CLEAR_COLOR.a)),
@@ -266,25 +285,23 @@ impl Gpu {
             },
         );
 
-        // 静态几何：一次性烘成顶点 + 索引缓冲。
-        let mut depth_verts: Vec<[f32; 3]> = Vec::new();
-        for tri in world.render_triangles() {
-            for v in tri {
-                depth_verts.push([v.x, v.y, v.z]);
-            }
-        }
-        let depth_index_count = depth_verts.len() as i32;
+        // 深度几何按上限预分配（Stream），切换 GLB 时 buffer_update 重传。
+        // 50k 三角形 = 150k 顶点 × 12B ≈ 1.8MB，覆盖所有手工地图。
+        const DEPTH_MAX_VERTS: usize = 150_000;
         let depth_vbo = ctx.new_buffer(
             BufferType::VertexBuffer,
-            BufferUsage::Immutable,
-            BufferSource::slice(&depth_verts),
+            BufferUsage::Stream,
+            BufferSource::empty::<[f32; 3]>(DEPTH_MAX_VERTS),
         );
-        let depth_indices: Vec<u32> = (0..depth_verts.len() as u32).collect();
+        // 索引一次性 0..MAX 建好（不画的部分靠 draw count 控制）。
+        let depth_indices: Vec<u32> = (0..DEPTH_MAX_VERTS as u32).collect();
         let depth_ibo = ctx.new_buffer(
             BufferType::IndexBuffer,
             BufferUsage::Immutable,
             BufferSource::slice(&depth_indices),
         );
+        let depth_index_count = upload_world_depth(ctx, depth_vbo, world, DEPTH_MAX_VERTS);
+        let depth_capacity = DEPTH_MAX_VERTS;
 
         Self {
             point_pipeline,
@@ -295,8 +312,33 @@ impl Gpu {
             depth_vbo,
             depth_ibo,
             depth_index_count,
+            depth_capacity,
         }
     }
+}
+
+/// 把 world 的真实几何扁平化为顶点数组，写入 depth vbo。返回索引数（= 顶点数）。
+fn upload_world_depth(
+    ctx: &mut dyn macroquad::miniquad::RenderingBackend,
+    vbo: BufferId,
+    world: &World,
+    capacity: usize,
+) -> i32 {
+    let mut verts: Vec<[f32; 3]> = Vec::new();
+    for tri in world.render_triangles() {
+        if verts.len() + 3 > capacity {
+            eprintln!(
+                "[render] 警告：地图三角形超过 depth buffer 上限 {} 顶点，已截断",
+                capacity
+            );
+            break;
+        }
+        for v in tri {
+            verts.push([v.x, v.y, v.z]);
+        }
+    }
+    ctx.buffer_update(vbo, BufferSource::slice(&verts));
+    verts.len() as i32
 }
 
 /// 把世界坐标投影到屏幕像素坐标；相机背后或视野外返回 None。

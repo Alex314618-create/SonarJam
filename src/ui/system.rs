@@ -44,26 +44,66 @@ impl Default for Theme {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct UiContext {
-    pub viewport: Vec2,
-    pub energy_ratio: f32,
-    pub fire_state: crate::sonar::system::FireVisualState,
+/// 顶部红警告横幅条目。GameApp 用 push_warning() 推入，自然 TTL 衰减后淡出。
+#[allow(dead_code)]
+pub struct Warning {
+    pub text: String,
+    /// 已存在秒数。UI 元素自行做"前 0.3s 淡入、后 0.5s 淡出、4s 总时长"等表现。
+    pub age: f32,
+    /// 总寿命；超过即可被 Ui 清掉。
+    pub life: f32,
 }
 
-impl UiContext {
-    pub fn new(viewport: Vec2, energy_ratio: f32, fire_state: crate::sonar::system::FireVisualState) -> Self {
+/// 左下系统日志一行。新条目顶部 push，旧的随 age 增长被 UI 渲染成 dim/faded。
+#[allow(dead_code)]
+pub struct LogLine {
+    pub text: String,
+    pub age: f32,
+}
+
+/// 每帧由 GameApp 现场拼装的 UI 输入快照。
+/// 用引用持有可变长字段，避免不必要的克隆。
+/// 部分字段当前未被任何 UiElement 消费——它们是为 HUD 翻译预留的数据通道，
+/// 等 PA 的 HTML 设计稿敲定后会被新元素读取。
+#[allow(dead_code)]
+#[derive(Copy, Clone)]
+pub struct UiContext<'a> {
+    pub viewport: Vec2,
+    pub energy_ratio: f32,
+    /// 离散能量段数 0..=5（满圆数）；UI 用它决定哪几个圆点 .full / .empty。
+    pub energy_segments: u32,
+    pub phase: u32,
+    pub fire_state: crate::sonar::system::FireVisualState,
+    pub warnings: &'a [Warning],
+    pub system_log: &'a [LogLine],
+}
+
+impl<'a> UiContext<'a> {
+    pub fn new(
+        viewport: Vec2,
+        energy_ratio: f32,
+        fire_state: crate::sonar::system::FireVisualState,
+        phase: u32,
+        warnings: &'a [Warning],
+        system_log: &'a [LogLine],
+    ) -> Self {
+        // 满圆数 = ceil(ratio * 5)，0..=5；ratio 极小时仍允许显示 0（全空提示能量耗尽）。
+        let energy_segments = (energy_ratio * 5.0).ceil().clamp(0.0, 5.0) as u32;
         Self {
             viewport,
             energy_ratio,
+            energy_segments,
+            phase,
             fire_state,
+            warnings,
+            system_log,
         }
     }
 }
 
 pub trait UiElement {
-    fn update(&mut self, ctx: &UiContext, theme: &Theme);
-    fn draw(&self, ctx: &UiContext, theme: &Theme);
+    fn update(&mut self, ctx: &UiContext<'_>, theme: &Theme);
+    fn draw(&self, ctx: &UiContext<'_>, theme: &Theme);
 }
 
 pub struct Ui {
@@ -84,13 +124,13 @@ impl Ui {
         ui
     }
 
-    pub fn update(&mut self, ctx: &UiContext) {
+    pub fn update(&mut self, ctx: &UiContext<'_>) {
         for element in &mut self.elements {
             element.update(ctx, &self.theme);
         }
     }
 
-    pub fn draw(&self, ctx: &UiContext) {
+    pub fn draw(&self, ctx: &UiContext<'_>) {
         for element in &self.elements {
             element.draw(ctx, &self.theme);
         }

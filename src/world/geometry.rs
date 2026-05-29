@@ -9,8 +9,6 @@ use crate::app::config::{
 };
 use macroquad::prelude::*;
 
-const DEFAULT_LEVEL: &str = "content/levels/earth_return_01/scene.glb";
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Surface {
     Wall,
@@ -112,10 +110,6 @@ pub struct World {
 }
 
 impl World {
-    pub fn new() -> Self {
-        Self::load(DEFAULT_LEVEL)
-    }
-
     /// 按路径加载一张 GLB；失败则回退代码盒子房间。
     pub fn load(path: &str) -> Self {
         if let Some(level) = crate::content::load(path) {

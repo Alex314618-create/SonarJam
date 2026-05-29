@@ -14,11 +14,11 @@
     overflow: hidden;
   }
 
-  /* === 视窗（按 1280×720 设计基准） === */
+  /* === 视窗（按 1920×1080 设计基准） === */
   .viewport {
     position: relative;
-    width: 1280px;
-    height: 720px;
+    width: 1920px;
+    height: 1080px;
     margin: 0 auto;
     background: radial-gradient(circle at center, #0a0c10 0%, #050608 80%);
   }
@@ -27,65 +27,83 @@
      ELEMENT: crosshair
      anchor: center
      data: 静态（无绑定）
+     设计基准：以 128px 准星源框为 1x 设计尺寸，可按 2x 超采样导出
      ============================================================ */
+  .crosshair-cluster {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 128px;
+    height: 128px;
+    transform: translate(-50%, -50%);
+  }
   .crosshair {
     position: absolute;
-    left: 50%; top: 50%;
-    width: 2px; height: 2px;
+    left: 50%;
+    top: 50%;
+    width: 1.2px;
+    height: 1.2px;
     transform: translate(-50%, -50%);
-    background: rgba(180, 240, 250, 0.85);
-    box-shadow: 0 0 4px rgba(180, 240, 250, 0.5);
+    background: rgba(150, 186, 198, 0.78);
+    box-shadow: 0 0 2px rgba(118, 152, 164, 0.32);
   }
   /* 十字准星的四条小臂 */
   .crosshair::before, .crosshair::after {
     content: "";
     position: absolute;
-    background: rgba(180, 240, 250, 0.85);
+    background: rgba(150, 186, 198, 0.78);
   }
   .crosshair::before {  /* 水平 */
-    left: -6px; top: 0;
-    width: 14px; height: 2px;
+    left: -4.2px;
+    top: 0;
+    width: 9.6px;
+    height: 1.2px;
   }
   .crosshair::after {  /* 垂直 */
-    left: 0; top: -6px;
-    width: 2px; height: 14px;
+    left: 0;
+    top: -4.2px;
+    width: 1.2px;
+    height: 9.6px;
   }
 
   /* ============================================================
      ELEMENT: energy_ring
      anchor: center
-     data: energy_ratio (0..1) → 满圆数 = ceil(ratio * 5)
-     表现：十字准星周围上/右/下/左/中 5 个圆环
-     实心蓝 = 有能量，空心 = 没能量
+     data: energy_ratio (0..1)
+     表现：十字准星周围一个正五边形的 5 个角点
+     实心灰蓝 = 有能量，空心细灰边 = 没能量
+     每消耗 1 格，熄灭 1 个点；不做连续填充
      ============================================================ */
   .energy-ring {
     position: absolute;
-    left: 50%; top: 50%;
+    left: 50%;
+    top: 50%;
     width: 0; height: 0;  /* 中心点；圆通过子元素的绝对偏移摆 */
   }
   .energy-ring .cell {
     position: absolute;
-    width: 12px; height: 12px;
+    width: 6px; height: 6px;
     border-radius: 50%;
-    border: 1.5px solid rgba(120, 200, 230, 0.5);
+    border: 1px solid rgba(128, 136, 146, 0.72);
     transform: translate(-50%, -50%);
-    transition: background 200ms ease;
+    transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
   }
-  /* 5 个位置：上/右/下/左/中（distance 26px 离中心） */
-  .energy-ring .cell.up    { top: -26px; left: 0;   }
-  .energy-ring .cell.right { top: 0;    left: 26px;}
-  .energy-ring .cell.down  { top: 26px;  left: 0;   }
-  .energy-ring .cell.left  { top: 0;    left: -26px;}
-  .energy-ring .cell.mid   { top: 0;    left: 0;   }  /* 中心，可省略；若用准星就别开 */
+  /* 正五边形 5 个角点，半径约 26px，收在 128px 源框中心 */
+  .energy-ring .cell.p1 { top: -26px; left: 0; }
+  .energy-ring .cell.p2 { top: -8px; left: 25px; }
+  .energy-ring .cell.p3 { top: 21px; left: 15px; }
+  .energy-ring .cell.p4 { top: 21px; left: -15px; }
+  .energy-ring .cell.p5 { top: -8px; left: -25px; }
   /* 实心 / 空心状态 */
   .cell.full {
-    background: rgba(0, 220, 255, 0.85);
-    border-color: rgba(0, 240, 255, 1.0);
-    box-shadow: 0 0 8px rgba(0, 200, 255, 0.6);
+    background: rgba(108, 156, 176, 0.78);
+    border-color: rgba(148, 160, 170, 0.85);
+    box-shadow: 0 0 4px rgba(90, 132, 150, 0.22);
   }
   .cell.empty {
     background: transparent;
-    border-color: rgba(80, 130, 160, 0.4);
+    border-color: rgba(104, 112, 122, 0.58);
+    box-shadow: none;
   }
 
   /* ============================================================
@@ -142,22 +160,23 @@
     <!-- ============================================================
          十字准星
          ============================================================ -->
-    <div class="crosshair"></div>
+    <div class="crosshair-cluster">
+      <div class="crosshair"></div>
 
-    <!-- ============================================================
-         能量圆：5 个，对应 energy_ratio。
-         运行时按 ratio 决定哪几个是 .full / .empty。
-         规则：满圆数 = ceil(ratio * 5)。从 mid 开始填？或从 up 开始填？
-         PA 决定填充顺序：（下面是从中心向四周扩散的示意）
-         ratio=1.0 → 全 full
-         ratio=0.8 → up/right/down/left full, mid empty (示意，按设计调)
-         ============================================================ -->
-    <div class="energy-ring">
-      <div class="cell up    full"></div>
-      <div class="cell right full"></div>
-      <div class="cell down  full"></div>
-      <div class="cell left  full"></div>
-      <div class="cell mid   full"></div>
+      <!-- ============================================================
+           能量点：5 个，对应 5 段离散能量。
+           运行时按剩余格数决定哪几个是 .full / .empty。
+           建议：按顺时针顺序熄灭，不做连续过渡。
+           ratio=1.0 或 5/5 → 全 full
+           ratio=0.8 或 4/5 → 最后 1 个点 empty
+           ============================================================ -->
+      <div class="energy-ring">
+        <div class="cell p1 full"></div>
+        <div class="cell p2 full"></div>
+        <div class="cell p3 full"></div>
+        <div class="cell p4 full"></div>
+        <div class="cell p5 full"></div>
+      </div>
     </div>
 
     <!-- ============================================================
