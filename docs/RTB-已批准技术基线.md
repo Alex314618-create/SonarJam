@@ -4,7 +4,7 @@
 >  
 > Status：Approved
 >  
-> Version：1.1.0
+> Version：1.2.0
 >  
 > Owner：Technical Steward
 >  
@@ -87,6 +87,16 @@
 - 未选原因：前期基础设施成本高，且核心玩法风险未先行验证
 - 范围：本决策**临时偏离 RTB-004**。`Blender` 作为正式内容入口的地位保留，仅推迟启用；手感参照为 `C:\Users\ROG\Desktop\sonar` C 原型
 - 失效条件：核心手感验证通过、需要正式关卡内容时，恢复 RTB-004 的 `Blender` 管线
+
+### RTB-006
+
+- 决策：引入 `gltf` crate（运行时依赖）用于解析 GLB 关卡
+- 理由：重启 Blender 管线（RTB-004），运行时需读取 Blender 导出的 `scene.glb`；`gltf` 是 Rust 生态最标准的 glTF 解析库、纯 Rust、无系统依赖
+- 备选方案：自写最小 GLB 解析 / 导出期生成 JSON 索引
+- 未选原因：自写解析重复造轮子且易错；当前直接读 GLB extras/几何更短路
+- 范围：标志 RTB-005 的"代码几何"阶段开始向 Blender 管线过渡；当前导入器按命名前缀（`R_`/`C_`/`M_`）分类，缺失 GLB 时回退代码盒子房间
+- 失效条件：若改用其他内容格式或解析路径
+- 批准来源：Product Authority（2026-05-29 对话确认）
 - 批准来源：Product Authority（2026-05-29 对话确认）
 
 ## 5. 修订记录
@@ -95,3 +105,4 @@
 |------|------|------|----------|----------|
 | 1.0.0 | 2026-05-29 | 初始基线登记 | Product Authority | 后续 L1/L2 必须引用本基线 |
 | 1.1.0 | 2026-05-29 | 新增 RTB-005：MVP 用代码几何，Blender 入口推迟（临时偏离 RTB-004） | Product Authority | spike 优先实现；L2-02 内容管线相应标注推迟 |
+| 1.2.0 | 2026-05-29 | 新增 RTB-006：引入 gltf crate，重启 Blender→GLB 导入管线 | Product Authority | 实现运行时 GLB 导入器；Blender 导出 scene.glb 验证 |

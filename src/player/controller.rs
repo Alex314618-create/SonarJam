@@ -49,7 +49,7 @@ impl Player {
         }
 
         let step = motion.normalize_or_zero() * MOVE_SPEED * dt;
-        self.pos = world.clamp_position(self.pos + step);
+        self.pos = world.resolve_player_movement(self.pos, self.pos + step);
     }
 
     pub fn eye(&self) -> Vec3 {

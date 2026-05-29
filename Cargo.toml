@@ -5,3 +5,4 @@ edition = "2021"
 
 [dependencies]
 macroquad = "0.4.15"
+gltf = "1.4"
