@@ -31,12 +31,14 @@ void main() {
 "#;
 
 const DEPTH_FRAGMENT: &str = r#"#version 100
+precision mediump float;
 void main() {
     gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
 }
 "#;
 
 const POINT_FRAGMENT: &str = r#"#version 100
+precision mediump float;
 varying lowp vec2 uv;
 varying lowp vec4 color;
 
@@ -53,6 +55,7 @@ void main() {
 "#;
 
 const COLOR_FRAGMENT: &str = r#"#version 100
+precision mediump float;
 varying lowp vec2 uv;
 varying lowp vec4 color;
 
