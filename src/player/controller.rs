@@ -1,65 +1,66 @@
-//! First-person controller with yaw/pitch look, WASD movement, and collision-aware camera.
+//! 第一人称控制器：鼠标看向 + WASD 移动 + 凸盒房间碰撞。
 
-use crate::app::config::{LOOK_SENSITIVITY, MAX_PITCH, MOVE_SPEED, PLAYER_HEIGHT};
+use crate::app::config::{LOOK_SENSITIVITY, MAX_PITCH, MOVE_SPEED};
 use crate::world::geometry::World;
 use macroquad::prelude::*;
 
-pub struct PlayerController {
-    position: Vec3,
+pub struct Player {
+    pos: Vec3,
     yaw: f32,
     pitch: f32,
-    last_mouse_position: Option<Vec2>,
+    last_mouse: Option<Vec2>,
 }
 
-impl PlayerController {
+impl Player {
     pub fn new(spawn: Vec3) -> Self {
         Self {
-            position: spawn,
+            pos: spawn,
             yaw: 0.0,
             pitch: 0.0,
-            last_mouse_position: None,
+            last_mouse: None,
         }
     }
 
     pub fn update(&mut self, dt: f32, world: &World, capture_mouse: bool) {
-        let mouse_now = {
-            let (x, y) = mouse_position();
-            vec2(x, y)
-        };
-
+        let mouse = Vec2::from(mouse_position());
         if capture_mouse {
-            let mouse_delta = mouse_now - self.last_mouse_position.unwrap_or(mouse_now);
-            self.yaw += mouse_delta.x * LOOK_SENSITIVITY;
-            self.pitch = (self.pitch - mouse_delta.y * LOOK_SENSITIVITY).clamp(-MAX_PITCH, MAX_PITCH);
+            let delta = mouse - self.last_mouse.unwrap_or(mouse);
+            self.yaw += delta.x * LOOK_SENSITIVITY;
+            self.pitch = (self.pitch - delta.y * LOOK_SENSITIVITY).clamp(-MAX_PITCH, MAX_PITCH);
         }
-        self.last_mouse_position = Some(mouse_now);
+        self.last_mouse = Some(mouse);
 
         let forward = self.forward();
-        let flat_forward = vec3(forward.x, 0.0, forward.z).normalize_or_zero();
-        let right = Vec3::Y.cross(flat_forward).normalize_or_zero();
+        let flat = vec3(forward.x, 0.0, forward.z).normalize_or_zero();
+        let right = flat.cross(Vec3::Y).normalize_or_zero();
 
-        let mut move_input = Vec3::ZERO;
+        let mut motion = Vec3::ZERO;
         if is_key_down(KeyCode::W) {
-            move_input += flat_forward;
+            motion += flat;
         }
         if is_key_down(KeyCode::S) {
-            move_input -= flat_forward;
+            motion -= flat;
         }
         if is_key_down(KeyCode::D) {
-            move_input += right;
+            motion += right;
         }
         if is_key_down(KeyCode::A) {
-            move_input -= right;
+            motion -= right;
         }
 
-        let desired = self.position
-            + move_input.normalize_or_zero() * MOVE_SPEED * dt;
-        self.position = world.resolve_player_movement(self.position, desired);
-        self.position.y = PLAYER_HEIGHT;
+        let step = motion.normalize_or_zero() * MOVE_SPEED * dt;
+        self.pos = world.clamp_position(self.pos + step);
     }
 
-    pub fn eye_position(&self) -> Vec3 {
-        self.position
+    pub fn eye(&self) -> Vec3 {
+        self.pos
+    }
+
+    /// 回到起点开始新一轮（朝向归零）。
+    pub fn respawn(&mut self, spawn: Vec3) {
+        self.pos = spawn;
+        self.yaw = 0.0;
+        self.pitch = 0.0;
     }
 
     pub fn forward(&self) -> Vec3 {
@@ -67,20 +68,12 @@ impl PlayerController {
         vec3(self.yaw.cos() * cp, self.pitch.sin(), self.yaw.sin() * cp).normalize()
     }
 
-    pub fn right(&self) -> Vec3 {
-        self.forward().cross(Vec3::Y).normalize_or_zero()
-    }
-
-    pub fn up(&self) -> Vec3 {
-        self.right().cross(self.forward()).normalize_or_zero()
-    }
-
     pub fn camera(&self) -> Camera3D {
         Camera3D {
-            position: self.eye_position(),
-            up: self.up(),
-            target: self.eye_position() + self.forward(),
-            fovy: 66.0f32.to_radians(),
+            position: self.pos,
+            target: self.pos + self.forward(),
+            up: Vec3::Y,
+            fovy: 60.0f32.to_radians(),
             aspect: Some(screen_width() / screen_height()),
             ..Default::default()
         }

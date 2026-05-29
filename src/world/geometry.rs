@@ -1,259 +1,123 @@
-//! Immutable level geometry, triangle raycast, and wall collision queries.
+//! 真实世界层：一个凸盒子房间（四面墙 + 地板 + 天花板），四面墙距离各不相同。
+//!
+//! 这是真实几何，永远干净、不被篡改——“工具有罪”的偏差将来叠加在感知层，
+//! 不在这里。提供：射线求交（声呐用）与玩家碰撞（盒内 clamp）。
 
-use crate::app::config::{PLAYER_HEIGHT, PLAYER_RADIUS};
+use crate::app::config::{
+    PLAYER_HEIGHT, PLAYER_RADIUS, ROOM_CEILING_Y, ROOM_FLOOR_Y, ROOM_MAX_X, ROOM_MAX_Z, ROOM_MIN_X,
+    ROOM_MIN_Z,
+};
 use macroquad::prelude::*;
 
-const FLOOR_Y: f32 = 0.0;
-const CEILING_Y: f32 = 3.0;
-const EPSILON: f32 = 0.0001;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SurfaceKind {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Surface {
     Wall,
     Floor,
     Ceiling,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct Hit {
     pub pos: Vec3,
-    pub normal: Vec3,
+    pub surface: Surface,
     pub distance: f32,
-    pub surface_kind: SurfaceKind,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct Triangle {
+struct Tri {
     a: Vec3,
     b: Vec3,
     c: Vec3,
-    normal: Vec3,
-    surface_kind: SurfaceKind,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct WallBox {
-    min: Vec2,
-    max: Vec2,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct RenderBox {
-    pub center: Vec3,
-    pub size: Vec3,
+    surface: Surface,
 }
 
 pub struct World {
-    triangles: Vec<Triangle>,
-    walls: Vec<WallBox>,
-    depth_boxes: Vec<RenderBox>,
+    tris: Vec<Tri>,
     spawn: Vec3,
 }
 
 impl World {
     pub fn new() -> Self {
-        let mut world = Self {
-            triangles: Vec::new(),
-            walls: Vec::new(),
-            depth_boxes: Vec::new(),
-            spawn: vec3(0.0, PLAYER_HEIGHT, 0.0),
-        };
+        let mut tris = Vec::new();
+        let (x0, x1) = (ROOM_MIN_X, ROOM_MAX_X);
+        let (z0, z1) = (ROOM_MIN_Z, ROOM_MAX_Z);
+        let (y0, y1) = (ROOM_FLOOR_Y, ROOM_CEILING_Y);
 
-        world.add_floor_and_ceiling(vec2(-2.0, -2.0), vec2(14.0, 18.0));
-        world.depth_boxes.push(RenderBox {
-            center: vec3(6.0, -0.025, 8.0),
-            size: vec3(16.0, 0.05, 20.0),
-        });
-        world.depth_boxes.push(RenderBox {
-            center: vec3(6.0, CEILING_Y + 0.025, 8.0),
-            size: vec3(16.0, 0.05, 20.0),
-        });
-        world.add_wall_rect(vec2(-2.0, -2.0), vec2(4.0, 0.0));
-        world.add_wall_rect(vec2(2.6, -2.0), vec2(14.0, 0.0));
-        world.add_wall_rect(vec2(-2.0, 0.0), vec2(-1.6, 18.0));
-        world.add_wall_rect(vec2(1.6, 0.0), vec2(2.0, 7.0));
-        world.add_wall_rect(vec2(1.6, 11.0), vec2(2.0, 18.0));
-        world.add_wall_rect(vec2(8.0, 0.0), vec2(8.4, 10.5));
-        world.add_wall_rect(vec2(8.0, 13.0), vec2(8.4, 18.0));
-        world.add_wall_rect(vec2(2.0, 17.6), vec2(14.0, 18.0));
-        world.add_wall_rect(vec2(13.6, 8.0), vec2(14.0, 18.0));
-        world.add_wall_rect(vec2(8.4, 7.0), vec2(12.5, 7.4));
-        world.add_wall_rect(vec2(10.0, 10.5), vec2(10.4, 14.5));
-        world.add_wall_rect(vec2(4.8, 13.2), vec2(9.2, 13.6));
-        world.add_pillar(vec2(5.6, 4.2), vec2(6.5, 5.4));
-        world.add_pillar(vec2(11.0, 15.0), vec2(12.0, 16.2));
+        // 地板与天花板
+        push_quad(&mut tris, v(x0, y0, z0), v(x1, y0, z0), v(x1, y0, z1), v(x0, y0, z1), Surface::Floor);
+        push_quad(&mut tris, v(x0, y1, z0), v(x0, y1, z1), v(x1, y1, z1), v(x1, y1, z0), Surface::Ceiling);
 
-        world
+        // 四面墙（内壁）——绕序无所谓，射线求交不剔除背面
+        push_quad(&mut tris, v(x0, y0, z0), v(x0, y0, z1), v(x0, y1, z1), v(x0, y1, z0), Surface::Wall); // 左 x0
+        push_quad(&mut tris, v(x1, y0, z1), v(x1, y0, z0), v(x1, y1, z0), v(x1, y1, z1), Surface::Wall); // 右 x1
+        push_quad(&mut tris, v(x1, y0, z0), v(x0, y0, z0), v(x0, y1, z0), v(x1, y1, z0), Surface::Wall); // 后 z0
+        push_quad(&mut tris, v(x0, y0, z1), v(x1, y0, z1), v(x1, y1, z1), v(x0, y1, z1), Surface::Wall); // 前 z1
+
+        Self {
+            tris,
+            spawn: v(0.0, PLAYER_HEIGHT, 0.0),
+        }
     }
 
-    pub fn player_spawn(&self) -> Vec3 {
+    pub fn spawn(&self) -> Vec3 {
         self.spawn
     }
 
-    pub fn depth_boxes(&self) -> &[RenderBox] {
-        &self.depth_boxes
-    }
-
+    /// 最近正向命中。射线从房间内部射出，命中内壁。
     pub fn raycast(&self, origin: Vec3, dir: Vec3, max_range: f32) -> Option<Hit> {
-        let mut best_hit: Option<Hit> = None;
-
-        for tri in &self.triangles {
-            if let Some(distance) = ray_triangle(origin, dir, tri) {
-                if distance <= max_range {
-                    let replace = best_hit
-                        .map(|current| distance < current.distance)
-                        .unwrap_or(true);
-                    if replace {
-                        best_hit = Some(Hit {
-                            pos: origin + dir * distance,
-                            normal: tri.normal,
-                            distance,
-                            surface_kind: tri.surface_kind,
-                        });
-                    }
+        let mut best: Option<Hit> = None;
+        for t in &self.tris {
+            if let Some(dist) = ray_tri(origin, dir, t.a, t.b, t.c) {
+                if dist <= max_range && best.map_or(true, |h| dist < h.distance) {
+                    best = Some(Hit {
+                        pos: origin + dir * dist,
+                        surface: t.surface,
+                        distance: dist,
+                    });
                 }
             }
         }
-
-        best_hit
+        best
     }
 
-    pub fn resolve_player_movement(&self, current: Vec3, desired: Vec3) -> Vec3 {
-        let mut resolved = current;
-        let try_x = vec3(desired.x, current.y, current.z);
-        if !self.collides_cylinder(try_x, PLAYER_RADIUS, PLAYER_HEIGHT) {
-            resolved.x = try_x.x;
-        }
-
-        let try_z = vec3(resolved.x, current.y, desired.z);
-        if !self.collides_cylinder(try_z, PLAYER_RADIUS, PLAYER_HEIGHT) {
-            resolved.z = try_z.z;
-        }
-
-        resolved
-    }
-
-    fn collides_cylinder(&self, position: Vec3, radius: f32, height: f32) -> bool {
-        if position.y < FLOOR_Y || position.y > CEILING_Y || position.y - PLAYER_HEIGHT > EPSILON {
-            return true;
-        }
-
-        if position.y - height < FLOOR_Y + 0.05 || position.y > CEILING_Y - 0.05 {
-            return true;
-        }
-
-        let point = vec2(position.x, position.z);
-        self.walls.iter().any(|wall| circle_intersects_aabb(point, radius, wall.min, wall.max))
-    }
-
-    fn add_floor_and_ceiling(&mut self, min: Vec2, max: Vec2) {
-        let floor_a = vec3(min.x, FLOOR_Y, min.y);
-        let floor_b = vec3(max.x, FLOOR_Y, min.y);
-        let floor_c = vec3(max.x, FLOOR_Y, max.y);
-        let floor_d = vec3(min.x, FLOOR_Y, max.y);
-        self.push_triangle(floor_a, floor_c, floor_b, SurfaceKind::Floor);
-        self.push_triangle(floor_a, floor_d, floor_c, SurfaceKind::Floor);
-
-        let ceil_a = vec3(min.x, CEILING_Y, min.y);
-        let ceil_b = vec3(max.x, CEILING_Y, min.y);
-        let ceil_c = vec3(max.x, CEILING_Y, max.y);
-        let ceil_d = vec3(min.x, CEILING_Y, max.y);
-        self.push_triangle(ceil_a, ceil_b, ceil_c, SurfaceKind::Ceiling);
-        self.push_triangle(ceil_a, ceil_c, ceil_d, SurfaceKind::Ceiling);
-    }
-
-    fn add_pillar(&mut self, min: Vec2, max: Vec2) {
-        self.add_wall_rect(min, max);
-    }
-
-    fn add_wall_rect(&mut self, min: Vec2, max: Vec2) {
-        self.walls.push(WallBox { min, max });
-        self.depth_boxes.push(RenderBox {
-            center: vec3((min.x + max.x) * 0.5, CEILING_Y * 0.5, (min.y + max.y) * 0.5),
-            size: vec3(max.x - min.x, CEILING_Y, max.y - min.y),
-        });
-
-        let x0 = min.x;
-        let x1 = max.x;
-        let z0 = min.y;
-        let z1 = max.y;
-        let y0 = FLOOR_Y;
-        let y1 = CEILING_Y;
-
-        self.push_quad(
-            vec3(x0, y0, z0),
-            vec3(x1, y0, z0),
-            vec3(x1, y1, z0),
-            vec3(x0, y1, z0),
-            SurfaceKind::Wall,
-        );
-        self.push_quad(
-            vec3(x1, y0, z1),
-            vec3(x0, y0, z1),
-            vec3(x0, y1, z1),
-            vec3(x1, y1, z1),
-            SurfaceKind::Wall,
-        );
-        self.push_quad(
-            vec3(x0, y0, z1),
-            vec3(x0, y0, z0),
-            vec3(x0, y1, z0),
-            vec3(x0, y1, z1),
-            SurfaceKind::Wall,
-        );
-        self.push_quad(
-            vec3(x1, y0, z0),
-            vec3(x1, y0, z1),
-            vec3(x1, y1, z1),
-            vec3(x1, y1, z0),
-            SurfaceKind::Wall,
-        );
-    }
-
-    fn push_quad(&mut self, a: Vec3, b: Vec3, c: Vec3, d: Vec3, surface_kind: SurfaceKind) {
-        self.push_triangle(a, b, c, surface_kind);
-        self.push_triangle(a, c, d, surface_kind);
-    }
-
-    fn push_triangle(&mut self, a: Vec3, b: Vec3, c: Vec3, surface_kind: SurfaceKind) {
-        let normal = (b - a).cross(c - a).normalize();
-        self.triangles.push(Triangle {
-            a,
-            b,
-            c,
-            normal,
-            surface_kind,
-        });
+    /// 凸盒房间：把玩家位置 clamp 在内壁以内即为碰撞。
+    pub fn clamp_position(&self, mut p: Vec3) -> Vec3 {
+        p.x = p.x.clamp(ROOM_MIN_X + PLAYER_RADIUS, ROOM_MAX_X - PLAYER_RADIUS);
+        p.z = p.z.clamp(ROOM_MIN_Z + PLAYER_RADIUS, ROOM_MAX_Z - PLAYER_RADIUS);
+        p.y = PLAYER_HEIGHT;
+        p
     }
 }
 
-fn ray_triangle(origin: Vec3, dir: Vec3, tri: &Triangle) -> Option<f32> {
-    let edge1 = tri.b - tri.a;
-    let edge2 = tri.c - tri.a;
-    let p = dir.cross(edge2);
-    let det = edge1.dot(p);
-    if det.abs() < EPSILON {
+fn v(x: f32, y: f32, z: f32) -> Vec3 {
+    vec3(x, y, z)
+}
+
+fn push_quad(tris: &mut Vec<Tri>, a: Vec3, b: Vec3, c: Vec3, d: Vec3, surface: Surface) {
+    tris.push(Tri { a, b, c, surface });
+    tris.push(Tri { a, b: c, c: d, surface });
+}
+
+/// Möller–Trumbore，不剔除背面。
+fn ray_tri(origin: Vec3, dir: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f32> {
+    const EPS: f32 = 1e-6;
+    let e1 = b - a;
+    let e2 = c - a;
+    let p = dir.cross(e2);
+    let det = e1.dot(p);
+    if det.abs() < EPS {
         return None;
     }
-
-    let inv_det = 1.0 / det;
-    let tvec = origin - tri.a;
-    let u = tvec.dot(p) * inv_det;
+    let inv = 1.0 / det;
+    let tv = origin - a;
+    let u = tv.dot(p) * inv;
     if !(0.0..=1.0).contains(&u) {
         return None;
     }
-
-    let q = tvec.cross(edge1);
-    let v = dir.dot(q) * inv_det;
-    if v < 0.0 || u + v > 1.0 {
+    let q = tv.cross(e1);
+    let vv = dir.dot(q) * inv;
+    if vv < 0.0 || u + vv > 1.0 {
         return None;
     }
-
-    let distance = edge2.dot(q) * inv_det;
-    (distance > EPSILON).then_some(distance)
-}
-
-fn circle_intersects_aabb(center: Vec2, radius: f32, min: Vec2, max: Vec2) -> bool {
-    let closest = vec2(center.x.clamp(min.x, max.x), center.y.clamp(min.y, max.y));
-    center.distance_squared(closest) < radius * radius
+    let t = e2.dot(q) * inv;
+    (t > EPS).then_some(t)
 }

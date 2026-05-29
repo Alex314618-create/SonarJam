@@ -3,6 +3,7 @@
 use macroquad::prelude::*;
 
 #[derive(Clone, Copy)]
+#[allow(dead_code)] // 完整九宫格锚点，供后续 UI 元素按需使用
 pub enum Anchor {
     TopLeft,
     TopCenter,
