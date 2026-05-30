@@ -35,7 +35,9 @@ impl Player {
         }
     }
 
-    pub fn update(&mut self, dt: f32, world: &World, capture_mouse: bool) {
+    /// `speed_scale` 1.0 = 完整步速；Ship 模式传 < 1 降速。
+    /// `radius` = 碰撞半径（Earth: PLAYER_RADIUS，Ship: SHIP_PLAYER_RADIUS）
+    pub fn update(&mut self, dt: f32, world: &World, capture_mouse: bool, speed_scale: f32, radius: f32) {
         // --- 视角（鼠标）---
         let mouse = Vec2::from(mouse_position());
         if capture_mouse {
@@ -71,9 +73,9 @@ impl Player {
             WALK_SPEED * SPRINT_MULTIPLIER
         } else {
             WALK_SPEED
-        };
+        } * speed_scale.max(0.0);
         let step = motion.normalize_or_zero() * speed * dt;
-        self.pos = world.resolve_player_movement(self.pos, self.pos + step);
+        self.pos = world.resolve_player_movement(self.pos, self.pos + step, radius);
 
         // --- headbob：相位持续累积，幅度向目标平滑 ---
         let (target_amp, freq) = if moving {
@@ -116,6 +118,53 @@ impl Player {
     /// 物理位置（不含 headbob）。
     pub fn position(&self) -> Vec3 {
         self.pos
+    }
+
+    /// 直接设置 Y（用于 Earth 模式贴 R_ 真山表面）。
+    pub fn set_y(&mut self, y: f32) {
+        self.pos.y = y;
+    }
+
+    /// 直接设置朝向 yaw（弧度）。出生时由 World::spawn_yaw 注入。
+    pub fn set_yaw(&mut self, yaw: f32) {
+        self.yaw = yaw;
+    }
+
+    /// 回滚 XZ（用于陡崖拦截：检测斜率超限后撤销本帧水平移动）。
+    pub fn set_xz(&mut self, x: f32, z: f32) {
+        self.pos.x = x;
+        self.pos.z = z;
+    }
+
+    /// DEV 模式自由飞行：6DOF 鼠标 + WASD（视线方向）+ Space/Ctrl 升降，无碰撞、无 bob、无 FOV 弹性。
+    pub fn update_fly(&mut self, dt: f32, capture_mouse: bool) {
+        let mouse = Vec2::from(mouse_position());
+        if capture_mouse {
+            let delta = mouse - self.last_mouse.unwrap_or(mouse);
+            self.yaw += delta.x * LOOK_SENSITIVITY;
+            self.pitch = (self.pitch - delta.y * LOOK_SENSITIVITY).clamp(-MAX_PITCH, MAX_PITCH);
+        }
+        self.last_mouse = Some(mouse);
+
+        let sprinting = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
+        let base_speed = WALK_SPEED * 3.0;
+        let speed = if sprinting { base_speed * 3.0 } else { base_speed };
+
+        let forward = self.forward();
+        let right = forward.cross(Vec3::Y).normalize_or_zero();
+
+        let mut motion = Vec3::ZERO;
+        if is_key_down(KeyCode::W) { motion += forward; }
+        if is_key_down(KeyCode::S) { motion -= forward; }
+        if is_key_down(KeyCode::D) { motion += right; }
+        if is_key_down(KeyCode::A) { motion -= right; }
+        if is_key_down(KeyCode::Space) { motion += Vec3::Y; }
+        if is_key_down(KeyCode::LeftControl) { motion -= Vec3::Y; }
+
+        if motion.length_squared() > 1e-6 {
+            self.pos += motion.normalize() * speed * dt;
+        }
+        self.bob_amp = 0.0;
     }
 
     pub fn forward(&self) -> Vec3 {

@@ -12,3 +12,11 @@ Thumbs.db
 /.vscode
 
 # Note: Cargo.lock is intentionally committed (binary crate).
+
+# Blender / 工具临时工作目录
+_temp_Blender/
+tools/GLB/
+tools/__pycache__/
+
+# 备份 GLB（保留主 scene.glb 即可）
+content/levels/ship_room/scene1.glb

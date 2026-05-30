@@ -274,12 +274,22 @@ pub struct UiContext<'a> {
     pub sprinting: bool,
     /// 在动但不是 sprint（走路）。drift > 阈值且未按 Shift。
     pub walking: bool,
+    /// 当前是否在 Ship 模式（开场飞船舱）。true 时藏掉准星/枪/能量条等声呐 HUD。
+    pub in_ship: bool,
+    /// HUD 启动进度（0=尚未启动，1=完全显示）。在 0..1 之间时 Ui::draw 会按元素 wake_time
+    /// 拉 CRT 扫线启动效果。Idle 状态由 GameApp 传 1.0，转场期间逐帧推进。
+    pub hud_boot_t: f32,
 }
 
 // ============ 框架 ============
 
 pub trait UiElement {
     fn draw(&self, ctx: &UiContext<'_>, scale: &Scale);
+    /// 该元素在 HUD boot 序列中的醒来时间（0..1，相对 BOOT_DUR）。
+    /// 默认 1.0 = 立刻显示，无 CRT 启动。覆盖此方法可让元素分段亮起。
+    fn wake_time(&self) -> f32 { 1.0 }
+    /// 元素屏幕 bbox（用于 boot 期间盖 CRT 启动遮罩）。None = 无遮罩。
+    fn bbox(&self, _ctx: &UiContext<'_>, _scale: &Scale) -> Option<Rect> { None }
 }
 
 pub struct Ui {
@@ -318,11 +328,62 @@ impl Ui {
 
     pub fn draw(&self, ctx: &UiContext<'_>) {
         let scale = Scale::from(ctx.viewport);
-        for el in &self.elements {
-            el.draw(ctx, &scale);
+        // Ship 模式：所有 HUD 都不画；只保留头盔呼吸雾。
+        if !ctx.in_ship {
+            for el in &self.elements {
+                el.draw(ctx, &scale);
+                // CRT 启动遮罩：仅在 boot 期间生效
+                if ctx.hud_boot_t < 1.0 {
+                    if let Some(bbox) = el.bbox(ctx, &scale) {
+                        draw_boot_curtain(bbox, el.wake_time(), ctx.hud_boot_t);
+                    }
+                }
+            }
+        }
+        // HUD 启动末尾的青光闪烁（boot 完成瞬间一闪）
+        if ctx.hud_boot_t > 0.92 && ctx.hud_boot_t < 1.0 {
+            let k = ((ctx.hud_boot_t - 0.92) / 0.08).clamp(0.0, 1.0);
+            // 0 → 1 → 0 单峰，峰值 0.4
+            let bell = 1.0 - (2.0 * k - 1.0).abs();
+            let a = bell * 0.42;
+            draw_rectangle(0.0, 0.0, ctx.viewport.x, ctx.viewport.y,
+                Color::new(0.62, 0.95, 1.0, a));
         }
         // 雾气最后画：盖在所有 HUD 之上（最贴近镜头/玻璃罩）
         self.fog.draw(ctx.viewport);
+    }
+}
+
+/// 每元素的 CRT 启动遮罩：
+///   hud_t < wake：全黑覆盖（元素隐藏）
+///   wake..wake+REVEAL：中央横向"扫线"扩张，上下黑边收缩；带青色辉光条
+///   wake+REVEAL..1：无遮罩
+fn draw_boot_curtain(bbox: Rect, wake: f32, hud_t: f32) {
+    const REVEAL: f32 = 0.09; // 单元素揭示时长（hud_t 比例，更快）
+    if hud_t >= wake + REVEAL { return; }
+    if hud_t < wake {
+        // 全黑覆盖
+        draw_rectangle(bbox.x, bbox.y, bbox.w, bbox.h, BLACK);
+        return;
+    }
+    // 0..1 揭示进度
+    let r = ((hud_t - wake) / REVEAL).clamp(0.0, 1.0);
+    let r_s = r * r * (3.0 - 2.0 * r); // smoothstep
+    let slit_h = bbox.h * r_s;
+    let slit_y = bbox.y + (bbox.h - slit_h) * 0.5;
+    // 上下黑盖
+    if slit_y > bbox.y {
+        draw_rectangle(bbox.x, bbox.y, bbox.w, slit_y - bbox.y, BLACK);
+    }
+    let below_y = slit_y + slit_h;
+    if below_y < bbox.y + bbox.h {
+        draw_rectangle(bbox.x, below_y, bbox.w, bbox.y + bbox.h - below_y, BLACK);
+    }
+    // 青色扫线辉光条（上下沿）
+    if r_s > 0.02 && r_s < 0.98 {
+        let glow = Color::new(0.55, 0.95, 1.0, 0.85);
+        draw_rectangle(bbox.x, slit_y - 1.0, bbox.w, 1.5, glow);
+        draw_rectangle(bbox.x, below_y - 0.5, bbox.w, 1.5, glow);
     }
 }
 
@@ -331,6 +392,7 @@ impl Ui {
 struct SonarGunEl;
 impl UiElement for SonarGunEl {
     fn draw(&self, ctx: &UiContext<'_>, _scale: &Scale) {
+        if ctx.in_ship { return; }
         let (x, y, w, h) = gun_screen_rect(ctx.viewport);
         let tex = sonar_gun_tex();
         draw_texture_ex(
@@ -343,6 +405,11 @@ impl UiElement for SonarGunEl {
                 ..Default::default()
             },
         );
+    }
+    fn wake_time(&self) -> f32 { 0.55 }
+    fn bbox(&self, ctx: &UiContext<'_>, _scale: &Scale) -> Option<Rect> {
+        let (x, y, w, h) = gun_screen_rect(ctx.viewport);
+        Some(Rect { x, y, w, h })
     }
 }
 
@@ -422,6 +489,11 @@ impl BreathFog {
         // 主 puff：设计 1100~1400 宽 ≈ 屏 60~75%
         let main_w = (1100.0 + self.rand_f32() * 300.0) * size_mul;
         self.spawn_puff(main_w, 0.0, intensity, 1.0);
+        if small {
+            crate::audio::play("breath_light");
+        } else {
+            crate::audio::play("run_breath");
+        }
 
         // 两侧贴底卫星雾：仅主呼气出，弱一档 + 持续略长（先到先散），
         // 让屏幕下方左右与中央雾连成一片均匀贴底
@@ -703,8 +775,12 @@ impl UiElement for HelmetOverlay {
 // ============ 元素：Crosshair + 5 Energy Ring ============
 
 struct CrosshairEnergy;
+impl CrosshairEnergy {
+    fn design_bbox() -> (f32, f32, f32, f32) { (DESIGN_W * 0.5 - 38.0, DESIGN_H * 0.5 - 38.0, 76.0, 76.0) }
+}
 impl UiElement for CrosshairEnergy {
     fn draw(&self, ctx: &UiContext<'_>, scale: &Scale) {
+        if ctx.in_ship { return; }
         // 中心在 design (960, 540)
         let c = scale.px(DESIGN_W * 0.5, DESIGN_H * 0.5);
 
@@ -741,6 +817,12 @@ impl UiElement for CrosshairEnergy {
                 draw_circle(p.x, p.y, dot_r, energy_fill());
             }
         }
+    }
+    fn wake_time(&self) -> f32 { 0.05 }
+    fn bbox(&self, _ctx: &UiContext<'_>, scale: &Scale) -> Option<Rect> {
+        let (x, y, w, h) = Self::design_bbox();
+        let tl = scale.px(x, y);
+        Some(Rect { x: tl.x, y: tl.y, w: scale.len(w), h: scale.len(h) })
     }
 }
 
@@ -804,6 +886,11 @@ impl UiElement for CompassTape {
         let dims = TextDims{ width: meas(&bearing_text, fs) };
         draw_t(&bearing_text, center.x - dims.width * 0.5, center.y + scale.len(rail_h * 0.5 + 22.0), fs, ink_strong());
     }
+    fn wake_time(&self) -> f32 { 0.20 }
+    fn bbox(&self, _ctx: &UiContext<'_>, scale: &Scale) -> Option<Rect> {
+        let tl = scale.px(DESIGN_W * 0.5 - 300.0, 44.0);
+        Some(Rect { x: tl.x, y: tl.y, w: scale.len(600.0), h: scale.len(60.0) })
+    }
 }
 
 // ============ 元素：WarningCard（左上）============
@@ -851,6 +938,11 @@ impl UiElement for WarningCardEl {
         let sub_fs = scale.font(9.0);
         draw_t(&w.sub, tl.x + scale.len(14.0), y + scale.len(2.0), sub_fs, ink_warm_sub());
     }
+    fn wake_time(&self) -> f32 { 0.70 }
+    fn bbox(&self, _ctx: &UiContext<'_>, scale: &Scale) -> Option<Rect> {
+        let tl = scale.px(100.0, 82.0);
+        Some(Rect { x: tl.x, y: tl.y, w: scale.len(340.0), h: scale.len(108.0) })
+    }
 }
 
 // ============ 元素：SuitVitals（左中）============
@@ -892,6 +984,11 @@ impl UiElement for SuitVitalsEl {
             draw_t(val, p.x + scale.len(320.0) - val_dims.width, p.y + scale.len(12.0), val_fs, *val_col);
             y += 20.0;
         }
+    }
+    fn wake_time(&self) -> f32 { 0.30 }
+    fn bbox(&self, _ctx: &UiContext<'_>, scale: &Scale) -> Option<Rect> {
+        let tl = scale.px(100.0, 272.0);
+        Some(Rect { x: tl.x, y: tl.y, w: scale.len(340.0), h: scale.len(140.0) })
     }
 }
 
@@ -965,6 +1062,11 @@ impl UiElement for BioSignsEl {
             y += 18.0;
         }
     }
+    fn wake_time(&self) -> f32 { 0.40 }
+    fn bbox(&self, _ctx: &UiContext<'_>, scale: &Scale) -> Option<Rect> {
+        let tl = scale.px(DESIGN_W - 108.0 - 290.0, 88.0);
+        Some(Rect { x: tl.x, y: tl.y, w: scale.len(298.0), h: scale.len(110.0) })
+    }
 }
 
 // ============ 元素：CommsLog（左下）============
@@ -1021,6 +1123,12 @@ impl UiElement for CommsLogEl {
             y += line_h;
         }
     }
+    fn wake_time(&self) -> f32 { 0.85 }
+    fn bbox(&self, _ctx: &UiContext<'_>, scale: &Scale) -> Option<Rect> {
+        // 左下：design left=100, bottom=120, width=460, height=120
+        let tl = scale.px(100.0, DESIGN_H - 240.0);
+        Some(Rect { x: tl.x, y: tl.y, w: scale.len(460.0), h: scale.len(124.0) })
+    }
 }
 
 // ============ 元素：IntegrityCell（右下电池条）============
@@ -1028,6 +1136,7 @@ impl UiElement for CommsLogEl {
 struct IntegrityCellEl;
 impl UiElement for IntegrityCellEl {
     fn draw(&self, ctx: &UiContext<'_>, scale: &Scale) {
+        if ctx.in_ship { return; }
         // design 右下：right=96, bottom=96, width=140
         let panel_w = 140.0;
         let x_right = DESIGN_W - 96.0;
@@ -1059,5 +1168,10 @@ impl UiElement for IntegrityCellEl {
             Color::new(0.78, 0.90, 0.94, 0.78)
         };
         draw_rectangle(p.x, bar_y, fill_w, bar_h, fill);
+    }
+    fn wake_time(&self) -> f32 { 0.50 }
+    fn bbox(&self, _ctx: &UiContext<'_>, scale: &Scale) -> Option<Rect> {
+        let tl = scale.px(DESIGN_W - 240.0, DESIGN_H - 130.0);
+        Some(Rect { x: tl.x, y: tl.y, w: scale.len(150.0), h: scale.len(32.0) })
     }
 }

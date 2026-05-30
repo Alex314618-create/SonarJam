@@ -6,4 +6,11 @@ default-run = "gamejam_sonar_spike"
 
 [dependencies]
 macroquad = "0.4.15"
-gltf = { version = "1.4", features = ["KHR_lights_punctual"] }
+gltf = { version = "1.4", features = ["KHR_lights_punctual", "KHR_texture_transform"] }
+# 音频：rodio 默认包含 mp3/ogg/wav/flac 解码（symphonia）。仅在主线程使用。
+rodio = "0.19"
+# 空间加速：声呐 raycast 走 BVH on C_，从 O(N) → O(log N)。
+# bvh 0.12 用 nalgebra 0.34；显式加 nalgebra 以使用 Point3/Vector3。glam ↔ nalgebra
+# 转换在 World::raycast 边界完成（仅几个标量构造，零成本）。
+bvh = "0.12"
+nalgebra = "0.34"

@@ -287,8 +287,8 @@ impl Gpu {
         );
 
         // 深度几何按上限预分配（Stream），切换 GLB 时 buffer_update 重传。
-        // 50k 三角形 = 150k 顶点 × 12B ≈ 1.8MB，覆盖所有手工地图。
-        const DEPTH_MAX_VERTS: usize = 150_000;
+        // 800k 三角形 = 2.4M 顶点 × 12B ≈ 28MB，给 R_ 加未来增长留余量。
+        const DEPTH_MAX_VERTS: usize = 2_400_000;
         let depth_vbo = ctx.new_buffer(
             BufferType::VertexBuffer,
             BufferUsage::Stream,
@@ -391,7 +391,8 @@ void main() {
     float r2 = dot(d, d);
     if (r2 > 0.25) discard;
     float a = 1.0 - smoothstep(0.16, 0.25, r2);
-    gl_FragColor = vec4(color.rgb, color.a * a);
+    // RGB 提亮（×1.6）：alpha 混合下 saturate 到屏幕，但点云感知更亮、更"硬"。
+    gl_FragColor = vec4(color.rgb * 1.6, color.a * a);
 }
 "#;
 

@@ -7,7 +7,7 @@ use crate::app::config::{
     ENERGY_REGEN_PER_SEC, PULSE_COOLDOWN, PULSE_COST, PULSE_RAYS, PULSE_SPREAD_DEG,
     SONAR_MAX_POINTS, SONAR_RANGE,
 };
-use crate::world::geometry::{Surface, World};
+use crate::world::geometry::{HitTag, Surface, World};
 use macroquad::prelude::*;
 use macroquad::rand::gen_range;
 
@@ -56,6 +56,20 @@ impl Sonar {
 
     pub fn points(&self) -> &[Point] {
         &self.points
+    }
+
+    /// 灌入预探明区静态点云（不触发枪口细线、不计入 head 环形游标）。
+    /// 用于 Earth 出生点登陆仓的"已探明态"。
+    pub fn seed_static(&mut self, cloud: &[Point]) {
+        for p in cloud {
+            if self.points.len() >= SONAR_MAX_POINTS {
+                break;
+            }
+            self.points.push(*p);
+        }
+        // 环形游标推进到当前末尾，让后续玩家发射在剩余容量里循环覆盖
+        self.head = self.points.len() % SONAR_MAX_POINTS;
+        self.new_this_frame.clear();
     }
 
     pub fn new_points(&self) -> impl Iterator<Item = &Point> + '_ {
@@ -110,6 +124,7 @@ impl Sonar {
         self.energy -= PULSE_COST;
         self.cooldown = PULSE_COOLDOWN;
         self.muzzle_flash = 1.0;
+        crate::audio::play("gun");
 
         let spread = PULSE_SPREAD_DEG.to_radians();
         for i in 0..PULSE_RAYS {
@@ -145,12 +160,24 @@ impl Sonar {
     fn cast(&mut self, world: &World, eye: Vec3, fwd: Vec3, right: Vec3, up: Vec3, off_x: f32, off_y: f32) {
         let dir = (fwd + right * off_x + up * off_y).normalize();
         if let Some(hit) = world.raycast(eye, dir, SONAR_RANGE) {
+            let color = color_for(hit.surface, hit.tag);
             let jitter = vec3(
                 gen_range(-0.035f32, 0.035),
                 gen_range(-0.035f32, 0.035),
                 gen_range(-0.035f32, 0.035),
             );
-            self.push(hit.pos + jitter, color_for(hit.surface));
+            self.push(hit.pos + jitter, color);
+            // Structure tag：再添 2 个散布点（3× 总量）便于辨识"非地形"
+            if hit.tag == HitTag::Structure {
+                for _ in 0..2 {
+                    let extra = vec3(
+                        gen_range(-0.12f32, 0.12),
+                        gen_range(-0.12f32, 0.12),
+                        gen_range(-0.12f32, 0.12),
+                    );
+                    self.push(hit.pos + extra, color);
+                }
+            }
         }
     }
 
@@ -184,7 +211,63 @@ fn mouse_left_down() -> bool {
     is_mouse_button_down(MouseButton::Left)
 }
 
-fn color_for(surface: Surface) -> Color {
+/// 按面积加权在三角形集合上均匀采样 `target_count` 个点，给每个点 sonar 标志色 ± 抖动。
+/// 用于 Earth 起步时把 crashed lander 的几何"预灌"成已探明的密集点云。
+pub fn sample_static_cloud(tris: &[[Vec3; 3]], target_count: usize) -> Vec<Point> {
+    if tris.is_empty() || target_count == 0 {
+        return Vec::new();
+    }
+    let mut areas: Vec<f32> = Vec::with_capacity(tris.len());
+    let mut total = 0.0_f32;
+    for t in tris {
+        let a = (t[1] - t[0]).cross(t[2] - t[0]).length() * 0.5;
+        areas.push(a);
+        total += a;
+    }
+    if total < 1e-6 {
+        return Vec::new();
+    }
+    let density = target_count as f32 / total;
+    let mut out: Vec<Point> = Vec::with_capacity(target_count);
+    for (t, a) in tris.iter().zip(areas.iter()) {
+        let n = (a * density).round() as usize;
+        for _ in 0..n {
+            let mut u = gen_range(0.0_f32, 1.0);
+            let mut v = gen_range(0.0_f32, 1.0);
+            if u + v > 1.0 {
+                u = 1.0 - u;
+                v = 1.0 - v;
+            }
+            let p = t[0] + (t[1] - t[0]) * u + (t[2] - t[0]) * v;
+            // 用面法线推断 surface 让颜色和玩家自己扫的一致
+            let normal = (t[1] - t[0]).cross(t[2] - t[0]).normalize_or_zero();
+            let surface = if normal.y > 0.6 {
+                Surface::Floor
+            } else if normal.y < -0.6 {
+                Surface::Ceiling
+            } else {
+                Surface::Wall
+            };
+            // 加点亚像素抖动让密集云不至于"网格化"
+            let jitter = vec3(
+                gen_range(-0.025_f32, 0.025),
+                gen_range(-0.025_f32, 0.025),
+                gen_range(-0.025_f32, 0.025),
+            );
+            // 预探明云在采样阶段无 tag 信息（C_*crashed* 都按 Normal 处理）
+            out.push(Point { pos: p + jitter, color: color_for(surface, HitTag::Normal) });
+        }
+    }
+    out
+}
+
+fn color_for(surface: Surface, tag: HitTag) -> Color {
+    // Danger tag 覆盖一切 surface 色——锁红（带点橙调以匹配青白点的感知亮度）。
+    // 纯红 (0.95, 0.18, 0.22) 实测在 sonar 暗底里亮度感只有青白点的 60%；
+    // 抬 G/B 把感知亮度拉回同档，保留 danger 红味。beam 线随点色也红。
+    if tag == HitTag::Danger {
+        return Color::new(jitter10(1.00), jitter10(0.42), jitter10(0.32), 1.0);
+    }
     match surface {
         Surface::Wall => Color::new(0.25, gen_range(0.75f32, 1.0), gen_range(0.85f32, 1.0), 1.0),
         Surface::Floor => Color::new(0.10, gen_range(0.70f32, 0.9), gen_range(0.55f32, 0.75), 1.0),

@@ -1,13 +1,23 @@
-//! 真实世界层：关卡几何。优先从 GLB 导入，缺失则回退到代码盒子房间。
+//! 真实世界层：关卡几何 + 声呐 raycast 加速结构。
 //!
-//! Render 网格供声呐 raycast（玩家“看见”的视觉几何），Collision 网格供玩家碰撞。
-//! 真实几何永远干净、不被篡改——“工具有罪”的偏差将来叠加在感知层。
+//! 几何分层（"感知反转 / 镜山"架构，见 docs/L0-感知反转-镜山备忘.md）：
+//!   · `R_*` Render 网格 = 真实几何（树、草、山等）。仅参与深度遮挡，不参与声呐 raycast。
+//!   · `C_*` Collision 网格 = 系统所见（断壁残垣）。同时担当玩家碰撞 + 声呐 raycast 源。
+//!     **这就是"工具有罪"的引擎本体——声呐看到的是 C_ 简化代理，不是真实世界。**
+//!   · `P_*` Phantom 网格 = 过去回声 / 异常建构，按对象名颜色显形。仅参与 raycast，不碰撞。
+//!
+//! Raycast 加速：在 C_ + P_ 上各建一棵 BVH（bvh crate 0.12），单 ray 从 O(N) → O(log N)。
 
 use crate::app::config::{
-    PLAYER_HEIGHT, PLAYER_RADIUS, ROOM_CEILING_Y, ROOM_FLOOR_Y, ROOM_MAX_X, ROOM_MAX_Z, ROOM_MIN_X,
+    PLAYER_HEIGHT, ROOM_CEILING_Y, ROOM_FLOOR_Y, ROOM_MAX_X, ROOM_MAX_Z, ROOM_MIN_X,
     ROOM_MIN_Z,
 };
+use bvh::aabb::{Aabb, Bounded};
+use bvh::bounding_hierarchy::BHShape;
+use bvh::bvh::Bvh;
+use bvh::ray::Ray as BvhRay;
 use macroquad::prelude::*;
+use nalgebra::{Point3, Vector3};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Surface {
@@ -68,10 +78,46 @@ impl PhantomColor {
     }
 }
 
+/// 命中几何的语义标签，与 Surface（视觉分面）正交。
+/// 由对象名识别（content::load 阶段在 C_ 几何上分类）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum HitTag {
+    /// 普通几何，按 Surface 颜色显形、单点。
+    Normal,
+    /// 被识别为危险（C_*danger/hazard/corpse/threat/trap/blood*）。
+    /// 显形锁红，beam 线随点色也红。
+    Danger,
+    /// 人类建筑/废墟/营地等"非地形"（C_*human/building/structure/ruin/camp/settlement/wreck/debris*）。
+    /// 命中产生 3 倍粒子（探索优化），便于辨识。
+    Structure,
+}
+
+impl HitTag {
+    /// 从 Blender 对象名识别 tag。**Danger 优先于 Structure**（同名命中危险 token 即视为危险）。
+    pub fn from_name(name: &str) -> Self {
+        let n = name.to_lowercase();
+        let danger_kw = [
+            "danger", "hazard", "corpse", "threat", "trap", "blood",
+        ];
+        let structure_kw = [
+            "human", "building", "structure", "ruin", "camp",
+            "settlement", "wreck", "debris",
+        ];
+        if danger_kw.iter().any(|k| n.contains(k)) {
+            HitTag::Danger
+        } else if structure_kw.iter().any(|k| n.contains(k)) {
+            HitTag::Structure
+        } else {
+            HitTag::Normal
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Hit {
     pub pos: Vec3,
     pub surface: Surface,
+    pub tag: HitTag,
     pub distance: f32,
 }
 
@@ -85,16 +131,12 @@ struct Tri {
 
 impl Tri {
     fn new(a: Vec3, b: Vec3, c: Vec3) -> Self {
-        // 按法线方向自动分面：朝上=地面、朝下=天花板、其余=墙。
-        let n = (b - a).cross(c - a).normalize_or_zero();
-        let surface = if n.y > 0.6 {
-            Surface::Floor
-        } else if n.y < -0.6 {
-            Surface::Ceiling
-        } else {
-            Surface::Wall
-        };
-        Self { a, b, c, surface }
+        Self {
+            a,
+            b,
+            c,
+            surface: surface_from_normal((b - a).cross(c - a).normalize_or_zero()),
+        }
     }
 
     fn with_surface(a: Vec3, b: Vec3, c: Vec3, surface: Surface) -> Self {
@@ -102,11 +144,82 @@ impl Tri {
     }
 }
 
+/// 按面法线方向把三角形分类：朝上=地面、朝下=天花板、其余=墙。
+/// 同时被 `Tri::new` 和 BVH 包装层使用，保证两路一致。
+fn surface_from_normal(n: Vec3) -> Surface {
+    if n.y > 0.6 {
+        Surface::Floor
+    } else if n.y < -0.6 {
+        Surface::Ceiling
+    } else {
+        Surface::Wall
+    }
+}
+
+/// BVH 节点形状：包装 `Tri` + tag + bvh crate 要求的 node_index 字段。
+struct BvhTri {
+    tri: Tri,
+    tag: HitTag,
+    node_index: usize,
+}
+
+impl Bounded<f32, 3> for BvhTri {
+    fn aabb(&self) -> Aabb<f32, 3> {
+        let mn = self.tri.a.min(self.tri.b).min(self.tri.c);
+        let mx = self.tri.a.max(self.tri.b).max(self.tri.c);
+        Aabb::with_bounds(
+            Point3::new(mn.x, mn.y, mn.z),
+            Point3::new(mx.x, mx.y, mx.z),
+        )
+    }
+}
+
+impl BHShape<f32, 3> for BvhTri {
+    fn set_bh_node_index(&mut self, i: usize) {
+        self.node_index = i;
+    }
+    fn bh_node_index(&self) -> usize {
+        self.node_index
+    }
+}
+
+/// 把 `[Vec3;3]` + 自动分类 surface + 显式 tag 包装成 BvhTri。
+fn bvh_tri_tagged(tag: HitTag, t: &[Vec3; 3]) -> BvhTri {
+    let n = (t[1] - t[0]).cross(t[2] - t[0]).normalize_or_zero();
+    BvhTri {
+        tri: Tri::with_surface(t[0], t[1], t[2], surface_from_normal(n)),
+        tag,
+        node_index: 0,
+    }
+}
+
+fn bvh_tri_phantom(color: PhantomColor, t: &[Vec3; 3]) -> BvhTri {
+    BvhTri {
+        tri: Tri::with_surface(t[0], t[1], t[2], Surface::Phantom(color)),
+        tag: HitTag::Normal, // phantom 自带颜色，不参与 Danger/Structure 通道
+        node_index: 0,
+    }
+}
+
 pub struct World {
-    render_tris: Vec<Tri>,    // 声呐 raycast
-    collision_tris: Vec<Tri>, // 玩家碰撞
-    phantom_tris: Vec<Tri>,   // 人形等"过去回声"——只参与 raycast，不参与碰撞
+    /// R_*：真实几何。仅参与深度遮挡（点云不穿墙）。**不参与声呐 raycast。**
+    render_tris: Vec<Tri>,
+    /// C_*：玩家碰撞用（resolve_player_movement → blocked()）。
+    /// 声呐 raycast 不直接读这里，而是读 raycast_shapes 上的 BVH（同源数据）。
+    collision_tris: Vec<Tri>,
+    /// 出生点登陆仓预探明区采样源（C_*crashed* 几何）。
+    crashed_tris: Vec<[Vec3; 3]>,
+    /// 声呐 raycast 的 BVH 节点。
+    /// 包含 C_（系统所见，与 collision_tris 同源）+ P_（phantom 显形）。
+    /// C_ 为空时回退 R_（兼容旧地图）。
+    raycast_shapes: Vec<BvhTri>,
+    raycast_bvh: Option<Bvh<f32, 3>>,
+    /// 物理地面查询专用：在 R_（真实山地几何）上建 BVH。
+    /// 玩家身体落在真山表面（"工具有罪"的内核：你脚下是真山，但声呐让你以为是断壁）。
+    physics_shapes: Vec<BvhTri>,
+    physics_bvh: Option<Bvh<f32, 3>>,
     spawn: Vec3,
+    spawn_yaw: f32,
 }
 
 impl World {
@@ -134,26 +247,70 @@ impl World {
             .iter()
             .map(|t| Tri::new(t[0], t[1], t[2]))
             .collect();
-        let collision_src = if level.collision_tris.is_empty() {
-            &level.render_tris
+        // C_ 空则回退 R_：raycast **与玩家碰撞**都回退到 R_，全部 Normal tag。
+        let raycast_src_tagged: Vec<(HitTag, [Vec3; 3])> = if level.collision_tris.is_empty() {
+            println!(
+                "[world] C_ 为空，raycast 与碰撞均回退到 R_（{} 三角）—— 建议补 C_ 简化代理避免玩家被装饰几何卡住",
+                level.render_tris.len()
+            );
+            level.render_tris.iter().map(|t| (HitTag::Normal, *t)).collect()
         } else {
-            &level.collision_tris
+            level.collision_tris.clone()
         };
-        let collision_tris: Vec<Tri> = collision_src
+        // collision_tris 给 blocked()——不需要 tag，只要几何
+        let collision_tris: Vec<Tri> = raycast_src_tagged
             .iter()
-            .map(|t| Tri::new(t[0], t[1], t[2]))
+            .map(|(_, t)| Tri::new(t[0], t[1], t[2]))
             .collect();
-        let phantom_tris: Vec<Tri> = level
-            .phantom_tris
+
+        // 在 raycast_src（= C_ 或 R_ fallback）+ phantom 上建 BVH。
+        let mut raycast_shapes: Vec<BvhTri> = raycast_src_tagged
             .iter()
-            .map(|(color, t)| Tri::with_surface(t[0], t[1], t[2], Surface::Phantom(*color)))
+            .map(|(tag, t)| bvh_tri_tagged(*tag, t))
             .collect();
+        for (color, t) in &level.phantom_tris {
+            raycast_shapes.push(bvh_tri_phantom(*color, t));
+        }
+        let raycast_bvh = build_bvh(&mut raycast_shapes);
+        let bvh_tag_ok = raycast_bvh.is_some();
+
+        // 统计 tag 分布（modeler 检查工具）
+        let n_danger = raycast_src_tagged.iter().filter(|(t, _)| *t == HitTag::Danger).count();
+        let n_struct = raycast_src_tagged.iter().filter(|(t, _)| *t == HitTag::Structure).count();
+        println!(
+            "[world] BVH: {} 节点形状 ({} C_/R_, 其中 {} Danger / {} Structure + {} P_) → {}",
+            raycast_shapes.len(),
+            raycast_src_tagged.len(),
+            n_danger, n_struct,
+            level.phantom_tris.len(),
+            if bvh_tag_ok { "已加速" } else { "空场景跳过" }
+        );
+
+        // R_ 物理 BVH：地面查询专用（玩家"脚踏真山"）
+        let mut physics_shapes: Vec<BvhTri> = level
+            .render_tris
+            .iter()
+            .map(|t| bvh_tri_tagged(HitTag::Normal, t))
+            .collect();
+        let physics_bvh = build_bvh(&mut physics_shapes);
+        println!(
+            "[world] 物理 BVH: {} R_ 节点形状 → {}",
+            physics_shapes.len(),
+            if physics_bvh.is_some() { "已加速" } else { "空场景跳过" }
+        );
+
         let spawn = level.spawn.unwrap_or_else(|| vec3(0.0, PLAYER_HEIGHT, 0.0));
+        let spawn_yaw = level.spawn_yaw.unwrap_or(0.0);
         Self {
             render_tris,
             collision_tris,
-            phantom_tris,
+            crashed_tris: level.crashed_tris,
+            raycast_shapes,
+            raycast_bvh,
+            physics_shapes,
+            physics_bvh,
             spawn,
+            spawn_yaw,
         }
     }
 
@@ -170,63 +327,130 @@ impl World {
         push_quad(&mut tris, v(x1, y0, z0), v(x0, y0, z0), v(x0, y1, z0), v(x1, y1, z0), Surface::Wall);
         push_quad(&mut tris, v(x0, y0, z1), v(x1, y0, z1), v(x1, y1, z1), v(x0, y1, z1), Surface::Wall);
 
+        let mut raycast_shapes: Vec<BvhTri> = tris
+            .iter()
+            .map(|t| BvhTri { tri: *t, tag: HitTag::Normal, node_index: 0 })
+            .collect();
+        let raycast_bvh = build_bvh(&mut raycast_shapes);
+
+        // code_room 下 R_ = collision tris；物理 BVH 也用它
+        let mut physics_shapes: Vec<BvhTri> = tris
+            .iter()
+            .map(|t| BvhTri { tri: *t, tag: HitTag::Normal, node_index: 0 })
+            .collect();
+        let physics_bvh = build_bvh(&mut physics_shapes);
+
         Self {
             render_tris: tris.clone(),
             collision_tris: tris,
-            phantom_tris: Vec::new(),
+            crashed_tris: Vec::new(),
+            raycast_shapes,
+            raycast_bvh,
+            physics_shapes,
+            physics_bvh,
             spawn: v(0.0, PLAYER_HEIGHT, 0.0),
+            spawn_yaw: 0.0,
         }
+    }
+
+    /// 物理地面查询：从 (x, z) 顶上往下打一道射线，返回最近 R_ 表面的 y。
+    /// 用来把玩家身体"贴"到真山上，让玩家感受到坡度、不会浮空/钻地。
+    pub fn ground_y_at(&self, x: f32, z: f32) -> Option<f32> {
+        let bvh = self.physics_bvh.as_ref()?;
+        let origin = vec3(x, 10_000.0, z);
+        let dir = vec3(0.0, -1.0, 0.0);
+        let ray = BvhRay::new(
+            Point3::new(origin.x, origin.y, origin.z),
+            Vector3::new(dir.x, dir.y, dir.z),
+        );
+        let mut best_dist: Option<f32> = None;
+        for shape in bvh.traverse(&ray, &self.physics_shapes) {
+            let t = &shape.tri;
+            if let Some(dist) = ray_tri(origin, dir, t.a, t.b, t.c) {
+                if best_dist.map_or(true, |b| dist < b) {
+                    best_dist = Some(dist);
+                }
+            }
+        }
+        best_dist.map(|d| origin.y - d)
+    }
+
+    /// 出生点登陆仓预探明区采样源三角形（按面积分配静态点云）
+    pub fn crashed_triangles(&self) -> &[[Vec3; 3]] {
+        &self.crashed_tris
+    }
+
+    pub fn spawn_yaw(&self) -> f32 {
+        self.spawn_yaw
     }
 
     pub fn spawn(&self) -> Vec3 {
         self.spawn
     }
 
-    /// 声呐能打到的真实渲染几何，按三角形给出（用于点云渲染的深度预通道）。
-    /// 几何是静态的，渲染器可缓存一次即可。
+    /// 用于深度预通道：R_（真实几何）+ C_（系统所见简化代理）都写深度，
+    /// 才能正确遮挡点云（C_ 墙也要挡住后方点云，否则玩家会"穿墙看见"）。
+    /// 几何是静态的，渲染器一次性缓存即可。
     pub fn render_triangles(&self) -> impl Iterator<Item = [Vec3; 3]> + '_ {
-        self.render_tris.iter().map(|t| [t.a, t.b, t.c])
+        self.render_tris
+            .iter()
+            .chain(self.collision_tris.iter())
+            .map(|t| [t.a, t.b, t.c])
     }
 
-    /// 声呐射线对 Render + Phantom 几何求最近正向命中。
-    /// 两套几何竞争同一条射线的最近距离——phantom 在玩家与墙之间会先被命中。
+    /// 声呐 raycast：BVH 加速、单 ray O(log N)。
+    /// 命中源 = C_（系统所见，主要墙体）+ P_（phantom 显形）；R_ 不参与（=真实几何对声呐隐形）。
+    /// 同一 BVH 容纳两类几何，统一最近命中比较。
+    ///
+    /// **方向归一化**：bvh 的 slab test 是尺度无关的，但我们自己跑 Möller-Trumbore 算 t
+    /// 时 t = 真实距离需要 dir 归一化才有意义（后续 max_range 比较）。
+    /// 入口处兜底归一一次。
     pub fn raycast(&self, origin: Vec3, dir: Vec3, max_range: f32) -> Option<Hit> {
+        let Some(bvh) = self.raycast_bvh.as_ref() else {
+            return None;
+        };
+        let dir = dir.normalize_or_zero();
+        if dir.length_squared() < 1e-12 {
+            return None;
+        }
+        let ray = BvhRay::new(
+            Point3::new(origin.x, origin.y, origin.z),
+            Vector3::new(dir.x, dir.y, dir.z),
+        );
         let mut best: Option<Hit> = None;
-        let consider = |tris: &[Tri], best: &mut Option<Hit>| {
-            for t in tris {
-                if let Some(dist) = ray_tri(origin, dir, t.a, t.b, t.c) {
-                    if dist <= max_range && best.map_or(true, |h: Hit| dist < h.distance) {
-                        *best = Some(Hit {
-                            pos: origin + dir * dist,
-                            surface: t.surface,
-                            distance: dist,
-                        });
-                    }
+        for shape in bvh.traverse(&ray, &self.raycast_shapes) {
+            let t = &shape.tri;
+            if let Some(dist) = ray_tri(origin, dir, t.a, t.b, t.c) {
+                if dist <= max_range && best.map_or(true, |h: Hit| dist < h.distance) {
+                    best = Some(Hit {
+                        pos: origin + dir * dist,
+                        surface: t.surface,
+                        tag: shape.tag,
+                        distance: dist,
+                    });
                 }
             }
-        };
-        consider(&self.render_tris, &mut best);
-        consider(&self.phantom_tris, &mut best);
+        }
         best
     }
 
     /// 分轴推进，对 Collision 几何做射线阻挡（够用的近似碰撞）。
-    pub fn resolve_player_movement(&self, current: Vec3, desired: Vec3) -> Vec3 {
+    pub fn resolve_player_movement(&self, current: Vec3, desired: Vec3, radius: f32) -> Vec3 {
         let mut pos = current;
         let dx = desired.x - current.x;
-        if dx.abs() > 1e-5 && !self.blocked(pos, vec3(dx.signum(), 0.0, 0.0), dx.abs()) {
+        if dx.abs() > 1e-5 && !self.blocked(pos, vec3(dx.signum(), 0.0, 0.0), dx.abs(), radius) {
             pos.x = desired.x;
         }
         let dz = desired.z - current.z;
-        if dz.abs() > 1e-5 && !self.blocked(pos, vec3(0.0, 0.0, dz.signum()), dz.abs()) {
+        if dz.abs() > 1e-5 && !self.blocked(pos, vec3(0.0, 0.0, dz.signum()), dz.abs(), radius) {
             pos.z = desired.z;
         }
-        pos.y = PLAYER_HEIGHT;
+        pos.y = current.y;
         pos
     }
 
-    fn blocked(&self, origin: Vec3, dir: Vec3, dist: f32) -> bool {
-        let reach = dist + PLAYER_RADIUS;
+    fn blocked(&self, origin: Vec3, dir: Vec3, dist: f32, radius: f32) -> bool {
+        let reach = dist + radius;
         for t in &self.collision_tris {
             if let Some(d) = ray_tri(origin, dir, t.a, t.b, t.c) {
                 if d <= reach {
@@ -235,6 +459,15 @@ impl World {
             }
         }
         false
+    }
+}
+
+/// 在给定形状集合上构建 BVH；空集返回 None。
+fn build_bvh(shapes: &mut Vec<BvhTri>) -> Option<Bvh<f32, 3>> {
+    if shapes.is_empty() {
+        None
+    } else {
+        Some(Bvh::build(shapes))
     }
 }
 

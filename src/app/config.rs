@@ -6,6 +6,13 @@ pub const CLEAR_COLOR: Color = Color::new(0.01, 0.01, 0.02, 1.0);
 
 // --- 玩家 ---
 pub const PLAYER_HEIGHT: f32 = 2.0;
+/// Earth 模式眼高：玩家身体落在 R_ 真山表面后，眼睛距地面的高度。
+/// 1.7 ≈ 人类平均眼高。spawn 也用这个 + 地面 y。
+pub const EARTH_EYE_HEIGHT: f32 = 1.7;
+/// 玩家可步行斜率上限（dy/dx_水平）。0.70 ≈ tan(35°)，超过 = 悬崖，水平移动被拒。
+pub const MAX_WALK_SLOPE: f32 = 0.70;
+/// Y 向地面 lerp 速率（1/秒）。12.0 ≈ 80ms 半衰期；缓坡丝滑，无传送感。
+pub const Y_LERP_RATE: f32 = 12.0;
 pub const PLAYER_RADIUS: f32 = 0.3;
 pub const WALK_SPEED: f32 = 5.0;
 pub const SPRINT_MULTIPLIER: f32 = 1.8; // 按住 Shift 跑步速度倍率（→ 9 m/s）
@@ -36,7 +43,9 @@ pub const ROOM_CEILING_Y: f32 = 3.0;
 
 // --- 声呐 ---
 pub const SONAR_RANGE: f32 = 40.0;
-pub const SONAR_MAX_POINTS: usize = 200_000; // 持久点云环形缓冲容量（含多轮残留）
+pub const SONAR_MAX_POINTS: usize = 400_000; // 持久点云环形缓冲容量（含 crashed 静态云 + 多轮残留）
+/// 出生点登陆仓预探明区静态采样点数（占 SONAR_MAX_POINTS 约 37%，留出 60% 给玩家发射）
+pub const CRASHED_CLOUD_POINTS: usize = 150_000;
 pub const PULSE_RAYS: usize = 864;
 // 圆形发射范围缩小 30%（32.64 → 22.85）
 pub const PULSE_SPREAD_DEG: f32 = 22.85;
@@ -54,7 +63,7 @@ pub const ENERGY_REGEN_PER_SEC: f32 = 30.0;
 // --- 点云渲染 ---
 // 点云走 miniquad GL_POINTS 底层管线：屏幕固定像素大小的方点 + 真实深度遮挡。
 // gl_PointSize 直接控制点的屏幕像素边长（需 GL_PROGRAM_POINT_SIZE，渲染器启动时开启）。
-pub const POINT_PIXEL_SIZE: f32 = 1.4;
+pub const POINT_PIXEL_SIZE: f32 = 1.68;
 // 点沿“指向相机”方向的偏移量，避免点与墙面 z-fighting（世界单位）。
 pub const POINT_DEPTH_BIAS: f32 = 0.02;
 // 每帧枪口细线采样上限
@@ -63,6 +72,17 @@ pub const MAX_BEAM_LINES: usize = 12;
 // --- Sonar Gun（右下手持枪 sprite + 激光起点）---
 // 在 1920×1080 设计空间里：以右下角为锚，gun 图片宽度 + 偏移让它斜插进画面。
 // 调这几个参数即可对齐"激光从枪口出"。
+// --- Ship 模式（开场飞船舱）---
+/// 走路速度倍率（相对 Earth 模式）。Ship 模式 = 真实人类舱内步速。
+pub const SHIP_WALK_SPEED_MUL: f32 = 0.50;
+/// Ship 模式眼睛距 spawn 地面的高度（相对参考；Earth 用 PLAYER_HEIGHT=2.0）
+pub const SHIP_EYE_HEIGHT: f32 = 0.9;
+/// Ship spawn y 微调：在 AABB.min.y 之上抬高这么多再加 SHIP_EYE_HEIGHT，
+/// 用于补偿 GLB 里地板不在 y=0 的情况（默认 0；PA 觉得人浮空就调正）。
+pub const SHIP_FLOOR_Y_OFFSET: f32 = 0.0;
+/// Ship 模式玩家碰撞半径（窄过道用；Earth 仍用 PLAYER_RADIUS=0.3）
+pub const SHIP_PLAYER_RADIUS: f32 = 0.08;
+
 /// 枪图设计宽度（设计像素，1920×1080 基准）
 pub const GUN_DESIGN_W: f32 = 280.0;
 /// 枪图相对右下角的偏移（设计像素，负数=向画内移；0=右下角贴角）

@@ -11,24 +11,36 @@
 //! GLB 经 Blender 导出已转为 Y-up，直接对应本引擎坐标，无需手动换轴。
 
 use crate::app::config::PLAYER_HEIGHT;
-use crate::world::geometry::PhantomColor;
+use crate::world::geometry::{HitTag, PhantomColor};
 use macroquad::prelude::*;
 
 pub struct LoadedLevel {
     pub render_tris: Vec<[Vec3; 3]>,
-    pub collision_tris: Vec<[Vec3; 3]>,
+    /// 每个 collision 三角形携带从对象名识别出的 HitTag（Normal/Danger/Structure）。
+    /// 同一对象的所有三角形共享同一 tag。
+    pub collision_tris: Vec<(HitTag, [Vec3; 3])>,
     /// 每个 phantom 三角形携带从对象名解析出的颜色；同一对象的所有三角形共享同色。
     pub phantom_tris: Vec<(PhantomColor, [Vec3; 3])>,
+    /// 名字含 `crashed` 的 C_ 对象的三角形——出生点登陆仓"预探明区"采样源。
+    pub crashed_tris: Vec<[Vec3; 3]>,
     pub spawn: Option<Vec3>,
+    /// 出生 yaw（弧度）。从 M_spawn 的世界变换的 local +X 方向提取。
+    /// engine yaw 约定：forward = (cos yaw, sin pitch, sin yaw)，即 yaw=atan2(local_X.z, local_X.x)。
+    pub spawn_yaw: Option<f32>,
 }
 
 pub fn load(path: &str) -> Option<LoadedLevel> {
-    let (doc, buffers, _images) = gltf::import(path).ok()?;
+    // 读字节并清空 extensionsRequired（绕过 gltf crate 对 KHR_lights_punctual 等的硬拒）
+    let raw = std::fs::read(path).ok()?;
+    let patched = crate::ship::strip_extensions_required_for_glb(&raw);
+    let (doc, buffers, _images) = gltf::import_slice(&patched).ok()?;
     let mut level = LoadedLevel {
         render_tris: Vec::new(),
         collision_tris: Vec::new(),
         phantom_tris: Vec::new(),
+        crashed_tris: Vec::new(),
         spawn: None,
+        spawn_yaw: None,
     };
     for scene in doc.scenes() {
         for node in scene.nodes() {
@@ -54,6 +66,10 @@ fn visit(node: &gltf::Node, parent: Mat4, buffers: &[gltf::buffer::Data], level:
     if name.starts_with("M_spawn") && level.spawn.is_none() {
         let p = world.transform_point3(Vec3::ZERO);
         level.spawn = Some(vec3(p.x, PLAYER_HEIGHT, p.z));
+        // 从 M_spawn 的 local +X 方向提取 yaw（玩家面朝方向）
+        let lx = world.transform_vector3(Vec3::X);
+        // forward = (cos yaw, _, sin yaw) → yaw = atan2(lx.z, lx.x)
+        level.spawn_yaw = Some(lx.z.atan2(lx.x));
     }
 
     if let Some(mesh) = node.mesh() {
@@ -67,6 +83,8 @@ fn visit(node: &gltf::Node, parent: Mat4, buffers: &[gltf::buffer::Data], level:
         } else {
             Cat::Skip
         };
+        // C_*crashed* 的几何额外进入 crashed_tris（不影响碰撞与 raycast 的正常工作）
+        let is_crashed = matches!(cat, Cat::Collision) && name.to_lowercase().contains("crashed");
 
         if !matches!(cat, Cat::Skip) {
             for prim in mesh.primitives() {
@@ -89,7 +107,13 @@ fn visit(node: &gltf::Node, parent: Mat4, buffers: &[gltf::buffer::Data], level:
                         positions[tri[2] as usize],
                     ];
                     match cat {
-                        Cat::Collision => level.collision_tris.push(pts),
+                        Cat::Collision => {
+                            let tag = HitTag::from_name(name);
+                            level.collision_tris.push((tag, pts));
+                            if is_crashed {
+                                level.crashed_tris.push(pts);
+                            }
+                        }
                         Cat::Phantom(color) => level.phantom_tris.push((color, pts)),
                         Cat::Render => level.render_tris.push(pts),
                         Cat::Skip => {}

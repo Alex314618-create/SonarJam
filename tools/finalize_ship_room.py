@@ -1,5 +1,131 @@
 """
-finalize_ship_room.py v14 — 4 面墙统一深橄榄屎色 + goggle 重合诊断确认
+finalize_ship_room.py v33 — 保守碰撞模式：贴近真实几何，少偷空间
+
+v33 变化（相对 v32）：
+- PA 反馈：apply transforms 后发现 v32 设置过激进——椅子完全无碰撞、装置偷
+  太多空间显得穿墙。玩家 collision radius 已经够小，不需要 script 额外偷
+- COLLISION_SKIP_ORIG_NAMES 清空（椅子加回 C_，AABB 老实给）
+- C_DEVICE_INSET 0.10 → 0.04（玩家 radius ~0.08，4cm tolerance 足够）
+- COLLISION_INSET_OVERRIDES 全删（device 一视同仁用默认 0.04）
+- C_WALL_OUT_EXPAND 0.05 → 0.10（墙增厚到 0.25m C_，防穿）
+- collision_free marker 仍然有效，靠 marker 定义走道（marker 比偷 inset 精准）
+
+v32 变化（相对 v31）：
+- try_read_markers_from_output_glb 后列出输出 GLB 所有 mesh 名（找不到 marker 时排查）
+- 放宽匹配：collision_free / collisionfree / no_collision / "free" 开头都接受
+
+v31 变化（相对 v30）：
+- 新增 OUTPUT_SCENE_GLB 常量 + try_read_markers_from_output_glb()：
+  当前 .blend 没找到 marker 时，自动 import 输出 GLB 抢救 marker bbox
+  解决 PA 在工作 .blend 之外的 scene.glb 加 marker、跑脚本扫不到的问题
+
+v30 变化（相对 v29）：
+- 新增 COLLISION_FREE_AUTO_EXTEND_Y（默认 True）：marker Y 自动扫全室
+  marker 现在语义是"通道横截面"：X+Z 定义通道宽高，Y 自动从前到后
+
+v29 变化（相对 v28）：
+- subtract_aabb 加 CARVE_MIN_SLAB_XY=0.25 阈值，丢弃裁切产生的薄 sliver
+  防止 marker 没盖满 device 时留下卡人的薄条
+
+v28 变化（相对 v27）：
+- 每个 marker 实际挖到了哪几个 device 的报告
+
+v27 变化（相对 v26）：
+- COLLISION_FREE_AUTO_EXTEND_Z（默认 True）：marker Z 自动延全高
+  防止地面薄 marker 让 3m 高装置上半截 C_ 继续挡人
+
+v26 变化（相对 v25）：
+
+v26 变化（相对 v25）：
+- PA 在输出 scene.glb 里手放 collision_free1/2 等方块标记"我要能通过这片"
+  → 脚本现在：
+    1. CLEAN_IMPORT wipe 之前先扫描所有 collision_free* mesh 存其 world bbox
+    2. 装置 C_ 生成时，对每个 C_ box 做 AABB 差集：C_ minus collision_free
+       结果是 0-6 个 slab 替代原 C_（自动避开标记区，标记之外的体积保留）
+    3. 完整重建标记到场景（同名 hidden mesh，无 R_/C_/P_/M_ 前缀 →
+       L3-02 §4.2 运行时 Cat::Skip 忽略），下次跑脚本仍能被扫到，幂等保留
+- 新增 _gather_collision_free / _subtract_aabb / _recreate_markers
+- 工作流：PA 开 scene.glb → 手放 collision_free 方块 → 跑脚本 → 导出 →
+  下次还能开同一 scene.glb 跑（方块持久化）
+
+v20-v25 见旧 docstring 段。
+
+v20 变化（相对 v19）：
+
+v20 变化（相对 v19）：
+- v19 门装饰全装在了 -Y 外侧，玩家在室内根本看不到 → 一片纯橙棕门板
+  → v20 全部翻面：
+    - 门板移到墙的室内侧（紧贴 y=y_min，不再居中在墙厚度中央）
+    - 加强带、铆钉、阀轮、控制面板、门框都凸出到室内方向（+Y）
+- v19 阀轮是 "+" 字形 box，不像阀门
+  → v20 用真 torus（圆环）+ 中心 hub 圆柱 + 双向辐条 box，潜艇舱门感
+  → 新增 _bm_add_torus_y 助手（沿 Y 轴的环面，参数化 major/minor radius）
+  → 新增 _bm_add_cylinder_y 助手（沿 Y 轴的实心圆柱，给 hub 用）
+- 新增 import math, mathutils.Matrix
+
+v19 变化（相对 v18）：
+- v18 门的补丁色块跟墙融为一体 → 完全看不出门
+  → v19 取消补丁，门 panel 改单一纯色"舱门警示橙棕"（door_solid），
+    跟墙的橄榄屎反差明显，玩家一眼能识别"这是门"
+- 去掉传统门把手 R_door_handle（不再设计成普通门）
+  → 改成 R_door_wheel：中央阀轮（保险柜/潜艇舱门感）
+    - 中央 hub box（18cm × 7cm × 18cm，凸出门外侧）
+    - 水平臂 60cm × 5cm × 8cm
+    - 垂直臂 8cm × 5cm × 60cm
+    - 合并成单一 mesh
+- 保留 R_door_band（中间加强带）和 R_door_rivets（6 颗铆钉）
+- 去掉 _DOOR_PALETTE（不再需要）
+- _MAT_DEFS 加 "door_solid"，去掉 door_iron_0..3 4 个
+
+v18 变化（相对 v17）：
+- 门改造为厚重钢板舱门：
+  - R_door_panel subdivide cuts=3 + 区域生长 BFS（door_iron 调色板 4 色，
+    冷暗钢灰为主、少量暖锈灰，区别于墙的橄榄屎）→ 钢板补丁质感
+  - 新增 R_door_rivets：6 颗黄铜铆钉（4 角 + 上下中点），凸出门外侧 1.2cm
+  - 新增 R_door_band：水平加强带，门高一半处，全宽，凸出 1.5cm，暗钢色
+- 装置碰撞：build_device_collision 原有逻辑已生成 C_ship_*；
+  增强日志：列出每个 device 名 + size，让 PA 可见每个物件都拿到了碰撞代理
+- _MAT_DEFS 新增 door_iron_0..3 / rivet / door_band 共 6 个材质
+
+v17 变化（相对 v16）：
+- v15/16 的 per-face 分配看着是均匀马赛克（每个 quad 独立抽色）
+  → v17 改区域生长 BFS：选种子 face → 抽色 → 按概率 grow 到相邻 face，
+    达到 patch_size 上限或邻居被堵就停 → 边界 face 进入下一个补丁
+  → 结果是大小不一、形状不规则的色块，像焊接铁补丁
+- subdivide 细化（cuts 4→6，每个 box 面 7×7=49 quads × 6 面 = 294 quads / box）
+  让补丁有足够分辨率呈现"小补丁/大补丁"差异
+- patch_min=2 / patch_max=14 / grow_prob=0.62
+  → 多数补丁 4-10 个 quad（中等），少数 2-3（小钉片）和 12-14（大铁板）
+- 调色板扩到 7 种橄榄屎暗色（增加色彩变化丰富度）
+- 4 面墙独立 seed → 补丁分布完全不重复
+
+v16 变化（相对 v15）：
+- PA 反馈：之前的 _temp_Blender/scene.glb 是已修改的版本，不想依赖它
+  → 脚本自己 import 源资产 tools/GLB/surveillance_room_scaled_3m.glb，
+    自包含起步，PA 在 Blender 里只需 Open 脚本 + Run
+- 新增 CLEAN_IMPORT 开关 + SOURCE_GLB 路径常量
+- main() 开头：
+    1. 删除所有 MESH / EMPTY 对象（如果 CLEAN_IMPORT=True）
+    2. bpy.ops.import_scene.gltf(filepath=SOURCE_GLB)
+    3. 进入既有 finalize 流程（rename / 房间 / 材质 / spawn）
+- 关闭 CLEAN_IMPORT 仍可对当前场景做 finalize（兼容旧用法）
+
+v15 变化（相对 v14）：
+- 关键认知：运行时 GLB 渲染**纯颜色无光影**——procedural Noise/ColorRamp 不出
+  GLB（base color socket 被节点占用 → 导出近乎默认），v11-v14 viewport 看到的
+  "不均匀斑驳"在游戏里都是假的。墙在游戏里就是一坨纯色 → "难绷"
+- 改方案：subdivide_wall_for_patches() 把每面墙 box 细分成网格（cuts=4 → ~5×5
+  网格/面），然后给 mesh 加 4-5 个橄榄屎调色板材质（每个都是纯 base color），
+  按 face 中心位置 stable-hash 分配 material_index → GLB 导出每个 face 一个
+  平色材质，游戏里直接看到色块拼接的"墙皮"质感
+- 移除 goggle：PA 已删 VR 眼镜，交互不再依赖它
+  - rename_existing_meshes 去掉 goggle 分支
+  - main 去掉 goggle 上色 + M_interact_vr_headset
+  - 删除 GOGGLES_ROOT / GOGGLES_PART_MAP / find_goggles_center
+- 清理死代码：make_directional_lit_material / make_gradient_iron_material /
+  assign_directional_lit / assign_gradient_iron / make_rusty_iron_material /
+  assign_rusty_iron 全部移除（运行时不出 GLB，已被 subdivide+palette 取代）
+- _MAT_DEFS 去掉 goggles_* 4 个条目
 
 v14 变化（相对 v13）：
 - 诊断证实 4 个 goggle mesh 几乎完全重合（同心多层 Tripo 输出，center 全一致，
@@ -121,30 +247,57 @@ v2 变化（相对 v1）：
 - 所有 C_* 碰撞代理 hide_set 隐藏 viewport（不影响导出）
 - 原始大地板 Object_4 去 R_ 前缀 + hide + 移到 _OriginalFloor_excluded
 
-PA 用法：
-  Scripting → Open → tools/finalize_ship_room.py → Run Script
-  导出前选所有 R_/C_/P_ → Object → Apply → All Transforms
-  File → Export → glTF 2.0:
-    - Format: glTF Binary
-    - Include → Limit to: 全部不勾
-    - Transform → +Y Up: 勾
-    - 路径：content/levels/ship_room/scene.glb
+PA 用法（v16 自包含）：
+  1. Blender 启动（任意空场景或 default cube 都行）
+  2. Scripting → Open → tools/finalize_ship_room.py → Run Script
+     → 脚本自动清空场景 + import 源 GLB + 组装房间 + 上色 + 放 spawn
+  3. 导出前选所有 R_/C_/P_ → Object → Apply → All Transforms
+  4. File → Export → glTF 2.0:
+     - Format: glTF Binary
+     - Include → Limit to: 全部不勾
+     - Transform → +Y Up: 勾
+     - 路径：content/levels/ship_room/scene.glb
+
+如果你想在已有场景上跑（不清空），把顶部 CLEAN_IMPORT 改成 False。
 
 幂等：本脚本生成的对象带 generator=SCRIPT_TAG，重跑会清理重建。
 """
 
 import bpy
 import bmesh
-from mathutils import Vector
+import math
+from mathutils import Vector, Matrix
 
-SCRIPT_TAG = "ship_room_finalize_v14"
+SCRIPT_TAG = "ship_room_finalize_v33"
+# v31: collision_free markers 自动从输出 GLB 读取（即使工作 .blend 里没有）
+OUTPUT_SCENE_GLB = r"C:\Users\ROG\Desktop\GameJam\content\levels\ship_room\scene.glb"
+# v16: 自包含——脚本自己 import 源 GLB，不依赖 PA 手动 append/修改的场景
+CLEAN_IMPORT = True   # True: 开局清空所有 mesh/empty 然后 import 源 GLB
+import os as _os
+# 源 GLB 候选路径列表（依次尝试，第一个存在的就用）
+# 注：Blender 的 __file__ 在 Run Script 时可能解析成意外路径，所以硬编码绝对路径
+_SOURCE_GLB_CANDIDATES = [
+    r"C:\Users\ROG\Desktop\GameJam\tools\GLB\surveillance_room_scaled_3m.glb",
+    r"C:/Users/ROG/Desktop/GameJam/tools/GLB/surveillance_room_scaled_3m.glb",
+]
+SOURCE_GLB = next((p for p in _SOURCE_GLB_CANDIDATES if _os.path.isfile(p)),
+                  _SOURCE_GLB_CANDIDATES[0])
 _OLD_TAGS = ("ship_room_finalize_v1", "ship_room_finalize_v2",
              "ship_room_finalize_v3", "ship_room_finalize_v4",
              "ship_room_finalize_v5", "ship_room_finalize_v6",
              "ship_room_finalize_v7", "ship_room_finalize_v8",
              "ship_room_finalize_v9", "ship_room_finalize_v10",
              "ship_room_finalize_v11", "ship_room_finalize_v12",
-             "ship_room_finalize_v13")
+             "ship_room_finalize_v13", "ship_room_finalize_v14",
+             "ship_room_finalize_v15", "ship_room_finalize_v16",
+             "ship_room_finalize_v17", "ship_room_finalize_v18",
+             "ship_room_finalize_v19", "ship_room_finalize_v20",
+             "ship_room_finalize_v21", "ship_room_finalize_v22",
+             "ship_room_finalize_v23", "ship_room_finalize_v24",
+             "ship_room_finalize_v25", "ship_room_finalize_v26",
+             "ship_room_finalize_v27", "ship_room_finalize_v28",
+             "ship_room_finalize_v29", "ship_room_finalize_v30",
+             "ship_room_finalize_v31", "ship_room_finalize_v32")
 
 # v10: -Y 墙向 +Y 方向收紧 0.9m
 WALL_YNEG_INSET = 0.9
@@ -164,16 +317,54 @@ FRAME_DEPTH = 0.18
 BASEBOARD_H = 0.10
 BASEBOARD_PROUD = 0.02
 CROWN_H = 0.08
-GOGGLES_ROOT = "CodexScaleRoot_Goggles"
 
-# v12: goggle 分区显式映射（key = rename 后的 mesh 名，value = 材质 key）
-# 第一次跑脚本时这个 dict 是空的 → 全部 fallback 到 goggles_shell
-# 控制台会打印每个 mesh 的 verts / bbox / center
-# PA 看完后把 4 个名字 + 想要的材质 key 填进来，下次跑就生效
-# 可用 material key: goggles_shell, goggles_strap, goggles_lens, goggles_misc
-GOGGLES_PART_MAP = {
-    # 例: "R_goggles_part_Object_5": "goggles_shell",
+# v22: 跳过 C_ship_* 碰撞代理的原始 GLB 物件名（去掉 R_ship_ 前缀后的名字）
+# 椅子等"有空隙"的形状用 AABB 会把空隙填实 → 玩家挤不过去；
+# 跳过后运行时按 L3-02 §4.4 回退到 R_render 几何作碰撞，玩家能穿过缝隙
+# 默认跳过 surveillance_room 的 3 张椅子（Object_6/7/8）；
+# 如果在游戏里发现别的物件也挤不过去，把名字（去掉 R_ship_ 前缀）加到这里
+COLLISION_SKIP_ORIG_NAMES = set()
+# v33: 椅子加回（玩家应该撞椅子，不该穿）；如果要 skip 某个 object，把名字加进来
+
+# v23/33: 墙 C_ 向房间外侧多扩（防"挤出墙"穿模）；R_ 不变
+# v33: 0.05 → 0.10，墙 C_ 总厚度 0.25m，更不易穿
+C_WALL_OUT_EXPAND = 0.10
+
+# v23/33: 装置 C_ 在 AABB 每侧内缩（玩家 radius tolerance）
+# v33: 0.10 → 0.04（玩家 radius ~0.08，4cm 容差够；不再大量偷空间，碰撞老实）
+# 想偷走道走 collision_free marker 路径（精准），别靠全局 inset
+C_DEVICE_INSET = 0.04
+
+# v24: 按原始物件名（去掉 R_ship_ 前缀后）覆盖默认 inset 或直接跳过
+# - 大型屏幕架/监控柱建议 0.15-0.20（多偷点过道）
+# - 桌子等贴近的小物件用 0.04（少偷点防穿）
+# - 完全跳过：用 COLLISION_SKIP_ORIG_NAMES（上面那个 set）
+# 跑一次脚本 → 看 [collision] 日志 → 找到对应 Object 名 → 在这里加条目 → 重跑
+# v27: collision_free marker 默认自动延伸到全高（PA 的 marker 常是地面薄方块，
+# 不会顾 Z；C_装置 3m 高的话上半截 C_ 仍挡人 → 把 hole Z 拉到房顶以上）
+COLLISION_FREE_AUTO_EXTEND_Z = True
+
+# v30: marker Y 方向也自动延伸到全房间——把 marker 当"通道横截面"，
+# X+Z 定义通道宽高，Y 自动扫到底（最常见的"我要从前走到后"语义）
+# 如果你想要"只在 marker bbox 内部清碰撞"的严格盒子语义，改成 False
+COLLISION_FREE_AUTO_EXTEND_Y = True
+
+# v29: 裁切产生的薄 slab 阈值——任何 XY 边长 < 此值的 slab 视为伪影丢弃
+# 原因：marker 没盖满 device 时会留下 marker 边界到 device 边界的薄条，
+# 玩家挤不过去那薄条 → 体感像"空间被压缩"。25cm 比玩家直径大，安全。
+CARVE_MIN_SLAB_XY = 0.25
+
+COLLISION_INSET_OVERRIDES = {
+    # v33: 清空，全部 device 用默认 C_DEVICE_INSET=0.04
+    # 如果某个物件需要单独调，按 "Object_X": 0.XX 加进来
 }
+
+# v15: 墙面调色板（深橄榄屎色，7 个变体，每个都是纯 base color → GLB 兼容）
+# G 略 > R，B 极低 → 橄榄绿调
+_WALL_PALETTE = ["wall_olive_0", "wall_olive_1", "wall_olive_2",
+                 "wall_olive_3", "wall_olive_4",
+                 "wall_olive_5", "wall_olive_6"]
+WALL_SUBDIV_CUTS = 6   # v17: 6 刀 → 每个 box 面 7×7 quads（足够补丁分辨率）
 
 
 # -------------------- 通用工具 --------------------
@@ -253,6 +444,41 @@ def _bm_add_box(bm, center, size):
     bm.faces.new([v[3], v[0], v[4], v[7]])  # -X
 
 
+def _bm_add_cylinder_y(bm, center, radius, depth, segments=16):
+    """沿 Y 轴的实心圆柱（顶/底面朝 ±Y）"""
+    cx, cy, cz = center
+    mat = (Matrix.Translation((cx, cy, cz))
+           @ Matrix.Rotation(math.radians(90), 4, 'X'))
+    bmesh.ops.create_cone(
+        bm, cap_ends=True, segments=segments,
+        radius1=radius, radius2=radius, depth=depth, matrix=mat)
+
+
+def _bm_add_torus_y(bm, center, major_r, minor_r,
+                    major_segs=24, minor_segs=8):
+    """沿 Y 轴的环面（donut 面朝 ±Y）。环在 XZ 平面，管沿 Y 凸起"""
+    cx, cy, cz = center
+    rings = []
+    for i in range(major_segs):
+        ang_maj = (2.0 * math.pi / major_segs) * i
+        cos_m, sin_m = math.cos(ang_maj), math.sin(ang_maj)
+        ring = []
+        for j in range(minor_segs):
+            ang_min = (2.0 * math.pi / minor_segs) * j
+            cos_n, sin_n = math.cos(ang_min), math.sin(ang_min)
+            vx = cx + cos_m * (major_r + cos_n * minor_r)
+            vy = cy + sin_n * minor_r
+            vz = cz + sin_m * (major_r + cos_n * minor_r)
+            ring.append(bm.verts.new((vx, vy, vz)))
+        rings.append(ring)
+    for i in range(major_segs):
+        a = rings[i]
+        b = rings[(i + 1) % major_segs]
+        for j in range(minor_segs):
+            j2 = (j + 1) % minor_segs
+            bm.faces.new([a[j], a[j2], b[j2], b[j]])
+
+
 def create_mesh_obj(name, boxes, coll):
     """boxes: [(center3, size3), ...]; 合并为单一 mesh 对象"""
     mesh = bpy.data.meshes.new(name + "_mesh")
@@ -271,20 +497,25 @@ def create_mesh_obj(name, boxes, coll):
 
 # 颜色（linear RGBA 0-1）+ Principled BSDF 参数
 _MAT_DEFS = {
-    # v7: 被装置柠檬+土黄光照亮的脏旧集装箱舱内
+    # 房间通用
     "ceiling":    ((0.025, 0.022, 0.018, 1.0), 0.30, 0.90, 0.0),  # 几乎全黑
-    "wall":       ((0.14, 0.12, 0.10, 1.0),    0.40, 0.85, 0.0),  # 兜底（实际墙走 rusty_iron）
-    "baseboard":  ((0.07, 0.055, 0.020, 1.0),  0.40, 0.85, 0.0),  # v13 压暗
+    "baseboard":  ((0.07, 0.055, 0.020, 1.0),  0.40, 0.85, 0.0),
     "crown":      ((0.07, 0.055, 0.020, 1.0),  0.40, 0.85, 0.0),
-    "door":       ((0.10, 0.08, 0.04, 1.0),    0.55, 0.80, 0.0),  # 深锈黄黑（融入环境）
-    "door_frame": ((0.38, 0.28, 0.08, 1.0),    0.85, 0.50, 0.0),  # 锈黄铜（让门可见）
-    "handle":     ((0.42, 0.38, 0.25, 1.0),    0.75, 0.50, 0.0),  # 磨损脏金属
-    "panel":      ((0.10, 0.55, 0.30, 1.0),    0.30, 0.30, 4.0),  # 发光绿（更亮，暗里更显眼）
-    # goggles: v11 手动分区上色（4 个 mesh 各一色，融入环境屎黄色调）
-    "goggles_shell":  ((0.16, 0.11, 0.04, 1.0), 0.15, 0.85, 0.0),  # 外壳：暗棕
-    "goggles_strap":  ((0.22, 0.16, 0.06, 1.0), 0.05, 0.92, 0.0),  # 带子：黄褐布感
-    "goggles_lens":   ((0.020, 0.018, 0.012, 1.0), 0.20, 0.65, 0.0),  # 镜片：几乎黑亮
-    "goggles_misc":   ((0.18, 0.13, 0.05, 1.0), 0.55, 0.55, 0.0),  # 按钮/小件：暗黄铜
+    "door":       ((0.10, 0.08, 0.04, 1.0),    0.55, 0.80, 0.0),
+    "panel":      ((0.10, 0.55, 0.30, 1.0),    0.30, 0.30, 4.0),
+    # v17 墙调色板：7 个橄榄屎暗色变体（G略>R，B极低），每个都是纯 base color
+    "wall_olive_0": ((0.012, 0.016, 0.004, 1.0), 0.05, 0.95, 0.0),  # 极暗（最多面积）
+    "wall_olive_1": ((0.020, 0.024, 0.007, 1.0), 0.05, 0.95, 0.0),  # 暗
+    "wall_olive_2": ((0.030, 0.036, 0.010, 1.0), 0.05, 0.95, 0.0),  # 中暗
+    "wall_olive_3": ((0.040, 0.048, 0.014, 1.0), 0.05, 0.95, 0.0),  # 中
+    "wall_olive_4": ((0.018, 0.020, 0.012, 1.0), 0.05, 0.95, 0.0),  # 偏冷暗（多点 B）
+    "wall_olive_5": ((0.050, 0.045, 0.012, 1.0), 0.05, 0.95, 0.0),  # 偏暖（R≥G，锈感补丁）
+    "wall_olive_6": ((0.058, 0.070, 0.022, 1.0), 0.05, 0.95, 0.0),  # 偏亮（少量高光补丁）
+    # v19 门：纯色舱门（警示橙棕，跟墙的橄榄屎反差明显）
+    "door_solid": ((0.10, 0.045, 0.012, 1.0), 0.10, 0.85, 0.0),     # 深暗橙棕（v21 压暗一倍）
+    "wheel":      ((0.45, 0.32, 0.10, 1.0),  0.65, 0.55, 0.0),      # 阀轮黄铜
+    "rivet":      ((0.30, 0.22, 0.08, 1.0),  0.55, 0.55, 0.0),      # 铆钉黄铜
+    "door_band":  ((0.10, 0.05, 0.015, 1.0), 0.30, 0.75, 0.0),      # 加强带暗棕
 }
 
 
@@ -553,6 +784,128 @@ def assign_material(obj, key):
         poly.material_index = 0
 
 
+# -------------------- v15: 墙面 subdivide + 调色板分配 --------------------
+
+def subdivide_mesh(obj, cuts=4):
+    """对 obj 的 mesh 做整体边细分，每条边切 cuts 刀"""
+    if obj is None or obj.type != "MESH":
+        return
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bmesh.ops.subdivide_edges(
+        bm, edges=list(bm.edges), cuts=cuts, use_grid_fill=True)
+    bm.to_mesh(obj.data)
+    bm.free()
+
+
+def _stable_hash(*ints):
+    """位置稳定 hash（不依赖 Python 内置 hash 的不稳定性）"""
+    h = 2166136261
+    for x in ints:
+        h ^= (x & 0xFFFFFFFF)
+        h = (h * 16777619) & 0xFFFFFFFF
+    return h
+
+
+def assign_palette_by_position(obj, palette_keys, weights=None, seed=0):
+    """
+    给 obj 加 palette_keys 里的所有材质作 slots，
+    每个 face 按中心位置 stable-hash 分到一个 slot。
+    weights: 同 palette_keys 长度的整数 list，控制各色出现概率（默认等权）
+    """
+    if obj is None or obj.type != "MESH" or not palette_keys:
+        return
+    obj.data.materials.clear()
+    for key in palette_keys:
+        obj.data.materials.append(get_or_create_material(key))
+
+    n = len(palette_keys)
+    if weights is None:
+        weights = [1] * n
+    # 展开权重 → 索引表（按权抽签）
+    bag = []
+    for i, w in enumerate(weights):
+        bag.extend([i] * max(1, w))
+    bag_len = len(bag)
+
+    for poly in obj.data.polygons:
+        c = poly.center
+        h = _stable_hash(
+            int(c.x * 1000), int(c.y * 1000), int(c.z * 1000), seed)
+        poly.material_index = bag[h % bag_len]
+
+
+def assign_patches_by_region_grow(obj, palette_keys, weights=None, seed=0,
+                                  patch_min=2, patch_max=14, grow_prob=0.62):
+    """
+    v17: 把 mesh face 用区域生长 BFS 分成不规则补丁，每个补丁一色。
+      - 在未上色 face 中按顺序选种子 → 抽一种颜色
+      - BFS 扩散到相邻 face（共享边），按 grow_prob 概率接受
+      - patch 长到 [patch_min, patch_max] 之间随机大小或邻居耗尽即停
+      - 下一个未上色 face 成为新补丁的种子
+    结果：大小/形状不规则的色块拼接，像焊接铁皮补丁
+    """
+    if obj is None or obj.type != "MESH" or not palette_keys:
+        return
+    obj.data.materials.clear()
+    for key in palette_keys:
+        obj.data.materials.append(get_or_create_material(key))
+
+    n_colors = len(palette_keys)
+    if weights is None:
+        weights = [1] * n_colors
+    bag = []
+    for i, w in enumerate(weights):
+        bag.extend([i] * max(1, w))
+    bag_len = len(bag)
+
+    mesh = obj.data
+    # 邻接表：共享 edge_key 的 face 互为邻居
+    edge_to_faces = {}
+    for f in mesh.polygons:
+        for ek in f.edge_keys:
+            edge_to_faces.setdefault(ek, []).append(f.index)
+    neighbors = {f.index: [] for f in mesh.polygons}
+    for ek, fids in edge_to_faces.items():
+        if len(fids) == 2:
+            a, b = fids
+            neighbors[a].append(b)
+            neighbors[b].append(a)
+
+    # 可控伪随机（LCG，避免 import random 的全局 seed 污染）
+    state = [(seed * 2654435761 + 1) & 0xFFFFFFFF]
+
+    def rand():
+        state[0] = (state[0] * 1664525 + 1013904223) & 0xFFFFFFFF
+        return state[0] / 0xFFFFFFFF
+
+    assigned = {}
+    n_patches = 0
+    for seed_face in range(len(mesh.polygons)):
+        if seed_face in assigned:
+            continue
+        color_idx = bag[int(rand() * bag_len) % bag_len]
+        target = patch_min + int(rand() * (patch_max - patch_min + 1))
+        frontier = [seed_face]
+        patch_size = 0
+        while frontier and patch_size < target:
+            current = frontier.pop(0)
+            if current in assigned:
+                continue
+            assigned[current] = color_idx
+            patch_size += 1
+            for nb in neighbors[current]:
+                if nb in assigned:
+                    continue
+                if rand() < grow_prob:
+                    frontier.append(nb)
+        n_patches += 1
+
+    for f in mesh.polygons:
+        f.material_index = assigned.get(f.index, 0)
+    return n_patches
+
+
 # -------------------- Empty --------------------
 
 def add_empty(name, location, coll, kind="PLAIN_AXES", size=0.3):
@@ -575,16 +928,13 @@ def rename_existing_meshes():
         if o.name.startswith(("R_", "C_", "P_", "excluded_", "_")):
             continue
         clean = o.name.replace(".", "_")
-        if is_under(o, GOGGLES_ROOT):
-            o.name = f"R_goggles_part_{clean}"
-        else:
-            o.name = f"R_ship_{clean}"
+        o.name = f"R_ship_{clean}"
         n += 1
     return n
 
 
 def identify_device_meshes():
-    """devices = 非地板、非 goggles 的 R_ship_* 装置 mesh"""
+    """devices = 非地板的 R_ship_* 装置 mesh"""
     devices = []
     for o in bpy.data.objects:
         if o.type != "MESH":
@@ -594,8 +944,6 @@ def identify_device_meshes():
         if o.get("generator") == SCRIPT_TAG:
             continue
         if o.name.startswith("R_floor"):
-            continue
-        if o.name.startswith("R_goggles"):
             continue
         devices.append(o)
     return devices
@@ -657,32 +1005,39 @@ def build_walls(x_min, x_max, y_min, y_max, cx, cy,
     咬合策略：
       +/-X 墙在 Y 方向延伸 inner_dy + 2t（包住 +/-Y 墙外侧），
       +/-Y 墙在 X 方向只 inner_dx（夹在 +/-X 墙之间）。
+    v23: C_wall_* 在房间外侧多扩 C_WALL_OUT_EXPAND（防穿墙）；R_ 不变
     """
     t = WALL_T
     h = ROOM_HEIGHT
     inner_dx = x_max - x_min
     inner_dy = y_max - y_min
+    e = C_WALL_OUT_EXPAND
+    t_c = t + e   # C_ 墙厚度
+    half_e = e * 0.5
 
-    # +X
+    # +X：R 在 x_max+t/2；C 在 x_max+t/2 + e/2（中心外移 e/2，厚度+e）
     create_mesh_obj("R_wall_xpos",
         [((x_max + t * 0.5, cy, h * 0.5), (t, inner_dy + 2 * t, h))],
         render_coll)
     create_mesh_obj("C_wall_xpos",
-        [((x_max + t * 0.5, cy, h * 0.5), (t, inner_dy + 2 * t, h))],
+        [((x_max + t * 0.5 + half_e, cy, h * 0.5),
+          (t_c, inner_dy + 2 * t, h))],
         collision_coll)
     # -X
     create_mesh_obj("R_wall_xneg",
         [((x_min - t * 0.5, cy, h * 0.5), (t, inner_dy + 2 * t, h))],
         render_coll)
     create_mesh_obj("C_wall_xneg",
-        [((x_min - t * 0.5, cy, h * 0.5), (t, inner_dy + 2 * t, h))],
+        [((x_min - t * 0.5 - half_e, cy, h * 0.5),
+          (t_c, inner_dy + 2 * t, h))],
         collision_coll)
     # +Y（无门）
     create_mesh_obj("R_wall_ypos",
         [((cx, y_max + t * 0.5, h * 0.5), (inner_dx, t, h))],
         render_coll)
     create_mesh_obj("C_wall_ypos",
-        [((cx, y_max + t * 0.5, h * 0.5), (inner_dx, t, h))],
+        [((cx, y_max + t * 0.5 + half_e, h * 0.5),
+          (inner_dx, t_c, h))],
         collision_coll)
 
     # -Y（带门洞，3 段合成单一 mesh）
@@ -691,16 +1046,23 @@ def build_walls(x_min, x_max, y_min, y_max, cx, cy,
     right_w = x_max - (door_cx + DOOR_W * 0.5)
     lintel_h = h - DOOR_H
     wall_y = y_min - t * 0.5
+    wall_y_c = wall_y - half_e   # C_ 中心向 -Y 外移
     boxes_r, boxes_c = [], []
     if left_w > 0.01:
-        b = ((x_min + left_w * 0.5, wall_y, h * 0.5), (left_w, t, h))
-        boxes_r.append(b); boxes_c.append(b)
+        boxes_r.append(((x_min + left_w * 0.5, wall_y, h * 0.5),
+                        (left_w, t, h)))
+        boxes_c.append(((x_min + left_w * 0.5, wall_y_c, h * 0.5),
+                        (left_w, t_c, h)))
     if right_w > 0.01:
-        b = ((x_max - right_w * 0.5, wall_y, h * 0.5), (right_w, t, h))
-        boxes_r.append(b); boxes_c.append(b)
+        boxes_r.append(((x_max - right_w * 0.5, wall_y, h * 0.5),
+                        (right_w, t, h)))
+        boxes_c.append(((x_max - right_w * 0.5, wall_y_c, h * 0.5),
+                        (right_w, t_c, h)))
     if lintel_h > 0.01:
-        b = ((door_cx, wall_y, DOOR_H + lintel_h * 0.5), (DOOR_W, t, lintel_h))
-        boxes_r.append(b); boxes_c.append(b)
+        boxes_r.append(((door_cx, wall_y, DOOR_H + lintel_h * 0.5),
+                        (DOOR_W, t, lintel_h)))
+        boxes_c.append(((door_cx, wall_y_c, DOOR_H + lintel_h * 0.5),
+                        (DOOR_W, t_c, lintel_h)))
     if boxes_r:
         create_mesh_obj("R_wall_yneg", boxes_r, render_coll)
         create_mesh_obj("C_wall_yneg", boxes_c, collision_coll)
@@ -709,59 +1071,100 @@ def build_walls(x_min, x_max, y_min, y_max, cx, cy,
 
 def build_door(door_cx, y_min, render_coll, collision_coll):
     """
-    v11: 单门板（关严），1 个把手，无中央接缝
+    v20: 门板紧贴墙的室内侧（y=y_min），所有装饰朝室内方向 +Y 凸出
+      + 阀轮改 torus 环 + hub 圆柱 + 双向辐条 box
     """
-    t = WALL_T
-    wall_y = y_min - t * 0.5
-    panel_full_w = DOOR_W - 0.01   # 跟门洞边只留 0.5cm 缝
+    panel_full_w = DOOR_W - 0.01
     panel_h_eff = DOOR_H - 0.01
 
-    # 单门板（关严）
+    # 门板：紧贴墙的室内面，向外侧延伸（不再居中在墙厚度中央）
+    door_panel_cy = y_min - DOOR_PANEL_T * 0.5
     create_mesh_obj("R_door_panel",
-        [((door_cx, wall_y, DOOR_H * 0.5),
+        [((door_cx, door_panel_cy, DOOR_H * 0.5),
           (panel_full_w, DOOR_PANEL_T, panel_h_eff))],
         render_coll)
     create_mesh_obj("C_door_panel",
-        [((door_cx, wall_y, DOOR_H * 0.5),
+        [((door_cx, door_panel_cy, DOOR_H * 0.5),
           (panel_full_w, DOOR_PANEL_T, panel_h_eff))],
         collision_coll)
 
-    # 把手：门右侧（玩家从外面看是右），内外各一
-    handle_w = 0.18
-    handle_th = 0.035
-    handle_t = 0.04
-    handle_z = 1.05
-    handle_x = door_cx + DOOR_W * 0.5 - handle_w * 0.5 - 0.10  # 距右边缘 10cm
-    inner_y = y_min + handle_t * 0.5 + 0.005
-    outer_y = y_min - t - handle_t * 0.5 - 0.005
-    handle_boxes = [
-        ((handle_x, inner_y, handle_z), (handle_w, handle_t, handle_th)),
-        ((handle_x, outer_y, handle_z), (handle_w, handle_t, handle_th)),
-    ]
-    create_mesh_obj("R_door_handle", handle_boxes, render_coll)
+    # 室内面（门板朝室内的一面）= y_min
+    inner_face_y = y_min
 
-    # 门顶控制面板（小绿色发光盒，暗示"已锁"）— 挂在 -Y 墙外侧
+    # 水平加强带（全宽，凸出室内 4cm）
+    band_h = 0.10
+    band_d = 0.04
+    band_y = inner_face_y + band_d * 0.5
+    create_mesh_obj("R_door_band",
+        [((door_cx, band_y, DOOR_H * 0.5),
+          (panel_full_w - 0.04, band_d, band_h))],
+        render_coll)
+
+    # 6 颗铆钉，凸出室内 2.5cm
+    rivet_size = 0.045
+    rivet_d = 0.025
+    rivet_y = inner_face_y + rivet_d * 0.5
+    rivet_margin = 0.10
+    rivet_xs = [door_cx - panel_full_w * 0.5 + rivet_margin,
+                door_cx + panel_full_w * 0.5 - rivet_margin]
+    rivet_zs_corners = [rivet_margin + 0.02,
+                        DOOR_H - rivet_margin - 0.02]
+    rivet_boxes = []
+    for rx in rivet_xs:
+        for rz in rivet_zs_corners:
+            rivet_boxes.append(
+                ((rx, rivet_y, rz), (rivet_size, rivet_d, rivet_size)))
+    band_top_z = DOOR_H * 0.5 + band_h * 0.5
+    band_bot_z = DOOR_H * 0.5 - band_h * 0.5
+    rivet_boxes.append(
+        ((door_cx, rivet_y, band_top_z + 0.15),
+         (rivet_size, rivet_d, rivet_size)))
+    rivet_boxes.append(
+        ((door_cx, rivet_y, band_bot_z - 0.15),
+         (rivet_size, rivet_d, rivet_size)))
+    create_mesh_obj("R_door_rivets", rivet_boxes, render_coll)
+
+    # v20: 阀轮 — torus 环 + hub 圆柱 + 水平/垂直辐条
+    wheel_cz = DOOR_H * 0.5 - 0.45
+    major_r = 0.18       # 环中心半径
+    minor_r = 0.025      # 环管半径
+    hub_r = 0.05         # hub 半径
+    hub_depth = 0.09     # hub 凸出 9cm（比环更突出）
+    spoke_w = 0.030      # 辐条横截面宽（XZ 平面方向）
+    spoke_d = 0.045      # 辐条凸出深度（Y 方向）
+
+    wheel_mesh = bpy.data.meshes.new("R_door_wheel_mesh")
+    bm = bmesh.new()
+    # torus 环（管中心在 y = inner_face_y + minor_r → 整环凸出 2×minor_r=5cm）
+    _bm_add_torus_y(
+        bm, (door_cx, inner_face_y + minor_r, wheel_cz),
+        major_r, minor_r, major_segs=32, minor_segs=10)
+    # hub 圆柱
+    _bm_add_cylinder_y(
+        bm, (door_cx, inner_face_y + hub_depth * 0.5, wheel_cz),
+        hub_r, hub_depth, segments=14)
+    # 辐条：水平 + 垂直，跨越整环（XZ 方向 box，沿 Y 凸出 spoke_d）
+    spoke_y = inner_face_y + spoke_d * 0.5
+    arm_full = (major_r + minor_r) * 2  # 跨越外环外缘
+    _bm_add_box(bm, (door_cx, spoke_y, wheel_cz),
+                (arm_full, spoke_d, spoke_w))   # 水平辐条
+    _bm_add_box(bm, (door_cx, spoke_y, wheel_cz),
+                (spoke_w, spoke_d, arm_full))   # 垂直辐条
+    bm.to_mesh(wheel_mesh)
+    bm.free()
+    wheel_obj = bpy.data.objects.new("R_door_wheel", wheel_mesh)
+    move_to_collection(wheel_obj, render_coll)
+    tag(wheel_obj)
+
+    # 门顶控制面板（绿色发光盒，暗示"已锁"）— 室内侧
     cp_w, cp_h, cp_d = 0.32, 0.10, 0.04
     cp_z = DOOR_H + 0.18
-    cp_y = y_min - t - cp_d * 0.5 - 0.01
+    cp_y = inner_face_y + cp_d * 0.5 + 0.01
     create_mesh_obj("R_door_panel_ctrl",
         [((door_cx, cp_y, cp_z), (cp_w, cp_d, cp_h))],
         render_coll)
 
-    # 4 边门框（合并为单 mesh）
-    fy = y_min - t - FRAME_DEPTH * 0.5
-    f = FRAME_T
-    frame_boxes = [
-        ((door_cx - DOOR_W * 0.5 - f * 0.5, fy, (DOOR_H + 2 * f) * 0.5),
-         (f, FRAME_DEPTH, DOOR_H + 2 * f)),
-        ((door_cx + DOOR_W * 0.5 + f * 0.5, fy, (DOOR_H + 2 * f) * 0.5),
-         (f, FRAME_DEPTH, DOOR_H + 2 * f)),
-        ((door_cx, fy, DOOR_H + f * 0.5),
-         (DOOR_W + 2 * f, FRAME_DEPTH, f)),
-        ((door_cx, fy, f * 0.5),
-         (DOOR_W + 2 * f, FRAME_DEPTH, f)),
-    ]
-    create_mesh_obj("R_door_frame", frame_boxes, render_coll)
+    # v21: 去掉室内门框（PA 反馈室内不要门框装饰）
 
 
 def build_trim(cx, cy, x_min, x_max, y_min, y_max, door_cx, render_coll):
@@ -798,22 +1201,84 @@ def build_trim(cx, cy, x_min, x_max, y_min, y_max, door_cx, render_coll):
 
 
 def build_device_collision(devices, collision_coll):
+    """为每个 R_ship_* 装置 mesh 生成 AABB 碰撞代理 C_ship_*。
+    v18: 增强日志——列出每个 device 拿到的碰撞 size，让 PA 可见全部生成情况。
+    v28: 跟踪每个 collision_free marker 实际挖到了哪几个 device，事后报告
+    跳过：过小（<5cm任一轴）/ 大薄板（>6m×6m×<20cm 是原地板兜底）"""
     n = 0
+    skipped = []
+    # v28: marker_name -> set(device_clean_name)
+    marker_touched = {name: [] for (_, _, name) in _COLLISION_FREE_BBOXES}
     for o in devices:
         if not o.name.startswith("R_ship_"):
             continue
         mn, mx = world_bbox([o])
         size = mx - mn
         if size.x < 0.05 or size.y < 0.05 or size.z < 0.05:
+            skipped.append((o.name, "too-small",
+                            (size.x, size.y, size.z)))
             continue
         if size.x > 6.0 and size.y > 6.0 and size.z < 0.2:
+            skipped.append((o.name, "thin-plate",
+                            (size.x, size.y, size.z)))
+            continue
+        clean = o.name.replace("R_ship_", "")
+        if clean in COLLISION_SKIP_ORIG_NAMES:
+            skipped.append((o.name, "configured-skip (gaps)",
+                            (size.x, size.y, size.z)))
             continue
         center = (mn + mx) * 0.5
-        clean = o.name.replace("R_ship_", "")
-        create_mesh_obj(f"C_ship_{clean}",
-            [((center.x, center.y, center.z), (size.x, size.y, size.z))],
-            collision_coll)
+        # v24: 默认 inset + per-name override
+        inset = COLLISION_INSET_OVERRIDES.get(clean, C_DEVICE_INSET)
+        sx_c = max(0.10, size.x - 2 * inset)
+        sy_c = max(0.10, size.y - 2 * inset)
+        sz_c = size.z  # Z 不缩（不影响走道宽度，且避免桌面变矮的诡异感）
+        # v26/27: 减去所有 collision_free 标记区域（v27 默认 Z 自动延全高）
+        c_center = (center.x, center.y, center.z)
+        c_size = (sx_c, sy_c, sz_c)
+        holes = []
+        # v28: 单独检查每个 marker 是否真碰到这个 device
+        for (mn3, mx3, m_name) in _COLLISION_FREE_BBOXES:
+            # v30: 按各轴 flag 决定是否自动延伸
+            hmn_y = -1000.0 if COLLISION_FREE_AUTO_EXTEND_Y else mn3[1]
+            hmx_y = +1000.0 if COLLISION_FREE_AUTO_EXTEND_Y else mx3[1]
+            hmn_z = -1.0 if COLLISION_FREE_AUTO_EXTEND_Z else mn3[2]
+            hmx_z = ROOM_HEIGHT + 1.0 if COLLISION_FREE_AUTO_EXTEND_Z else mx3[2]
+            hmn = (mn3[0], hmn_y, hmn_z)
+            hmx = (mx3[0], hmx_y, hmx_z)
+            holes.append((hmn, hmx))
+            # 简单 AABB 相交检测
+            cmn = [c_center[i] - c_size[i] * 0.5 for i in range(3)]
+            cmx = [c_center[i] + c_size[i] * 0.5 for i in range(3)]
+            if (cmn[0] < hmx[0] and cmx[0] > hmn[0] and
+                cmn[1] < hmx[1] and cmx[1] > hmn[1] and
+                cmn[2] < hmx[2] and cmx[2] > hmn[2]):
+                marker_touched[m_name].append(clean)
+        final_boxes = carve_box_with_holes(c_center, c_size, holes)
+        if not final_boxes:
+            skipped.append((o.name, "carved out by collision_free",
+                            (sx_c, sy_c, sz_c)))
+            continue
+        create_mesh_obj(f"C_ship_{clean}", final_boxes, collision_coll)
+        tag_inset = "(override)" if clean in COLLISION_INSET_OVERRIDES else ""
+        carve_note = f"  carved={len(final_boxes)}slabs" if len(final_boxes) > 1 else ""
+        print(f"[collision]   C_ship_{clean}  "
+              f"render=({size.x:.2f},{size.y:.2f},{size.z:.2f})  "
+              f"collide=({sx_c:.2f},{sy_c:.2f},{sz_c:.2f})  "
+              f"inset={inset:.2f}{tag_inset}  "
+              f"center=({center.x:+.2f},{center.y:+.2f}){carve_note}")
         n += 1
+    for name, reason, sz in skipped:
+        print(f"[collision]   SKIP {name} ({reason}) size={sz}")
+    # v28: per-marker 报告
+    if _COLLISION_FREE_BBOXES:
+        print(f"[collision] --- collision_free marker 挖掘报告 ---")
+        for m_name, touched in marker_touched.items():
+            if touched:
+                print(f"[collision]   {m_name} 挖到: {touched}")
+            else:
+                print(f"[collision]   {m_name} ⚠ 没碰到任何 device "
+                      f"（marker 太小/位置偏？这个 marker 没起作用）")
     return n
 
 
@@ -825,23 +1290,227 @@ def hide_collision_viewport(collision_coll):
             o.hide_viewport = True
 
 
-def find_goggles_center():
-    gg = [o for o in bpy.data.objects
-          if o.type == "MESH" and is_under(o, GOGGLES_ROOT)]
-    if not gg:
-        return None
-    mn, mx = world_bbox(gg)
-    return (mn + mx) * 0.5
+# -------------------- v26: collision_free 标记处理 --------------------
+
+# 全局：收集到的 collision_free* bbox 列表，元素是 (mn3, mx3, name)
+_COLLISION_FREE_BBOXES = []
+
+
+def gather_collision_free():
+    """扫当前 Blender 场景里所有 collision_free* mesh，返回其 world bbox 列表"""
+    out = []
+    for o in bpy.data.objects:
+        if o.type != "MESH":
+            continue
+        if not o.name.lower().startswith("collision_free"):
+            continue
+        mn, mx = world_bbox([o])
+        out.append((tuple(mn), tuple(mx), o.name))
+    return out
+
+
+def try_read_markers_from_output_glb(path):
+    """v31: 临时 import 输出 GLB，挖出 collision_free* 的 world bbox，然后删掉刚 import 的对象。
+    用于 PA 工作 .blend 不含 marker、marker 只存在于已导出 scene.glb 的情况。"""
+    if not _os.path.isfile(path):
+        print(f"[finalize] (output GLB 不存在，跳过 marker fallback 读取: {path})")
+        return []
+    pre = set(bpy.data.objects.keys())
+    try:
+        bpy.ops.import_scene.gltf(filepath=path)
+    except Exception as e:
+        print(f"[finalize] WARN: 读取输出 GLB 失败: {e}")
+        return []
+    post = set(bpy.data.objects.keys())
+    new_names = post - pre
+    new_objs = [bpy.data.objects[n] for n in new_names if n in bpy.data.objects]
+
+    out = []
+    all_mesh_names = []
+    for o in new_objs:
+        if o.type != "MESH":
+            continue
+        all_mesh_names.append(o.name)
+        # 宽松匹配：名字里包含 "collision_free" / "collisionfree" / "no_collision" 都接受
+        nm = o.name.lower()
+        if ("collision_free" in nm or "collisionfree" in nm
+                or "no_collision" in nm or nm.startswith("free")):
+            mn, mx = world_bbox([o])
+            clean = o.name.split(".")[0]
+            out.append((tuple(mn), tuple(mx), clean))
+            print(f"[finalize]   matched marker in output GLB: '{o.name}'")
+
+    # v32: 列出输出 GLB 里所有 mesh 名字，方便定位为什么 marker 没找到
+    print(f"[finalize] output GLB contains {len(all_mesh_names)} mesh objects:")
+    for nm in sorted(all_mesh_names):
+        print(f"[finalize]   - {nm}")
+
+    # 删除所有刚 import 进来的对象
+    for o in new_objs:
+        try:
+            bpy.data.objects.remove(o, do_unlink=True)
+        except Exception:
+            pass
+
+    return out
+
+
+def subtract_aabb(c_center, c_size, hole_min, hole_max, eps=0.01):
+    """
+    标准 3D AABB 差集：返回 c (center, size) 减去 hole (min,max) 后的 box 列表（最多 6 个 slab）
+    - 不相交 → 返回原 c
+    - hole 包含 c → 返回 []
+    - 部分相交 → 返回 1-6 个 slab，每个 (center, size)
+    """
+    c_min = [c_center[i] - c_size[i] * 0.5 for i in range(3)]
+    c_max = [c_center[i] + c_size[i] * 0.5 for i in range(3)]
+    # 重叠区
+    ov_min = [max(c_min[i], hole_min[i]) for i in range(3)]
+    ov_max = [min(c_max[i], hole_max[i]) for i in range(3)]
+    if any(ov_min[i] >= ov_max[i] - 1e-6 for i in range(3)):
+        return [(tuple(c_center), tuple(c_size))]
+
+    result = []
+    rem_min = list(c_min)
+    rem_max = list(c_max)
+    for axis in range(3):
+        # before-hole slab
+        if rem_min[axis] < ov_min[axis] - 1e-6:
+            sl_min = list(rem_min)
+            sl_max = list(rem_max)
+            sl_max[axis] = ov_min[axis]
+            size = [sl_max[i] - sl_min[i] for i in range(3)]
+            # v29: 丢弃 XY 任一边 < CARVE_MIN_SLAB_XY 的薄 slab（裁切伪影）
+            if (all(s > eps for s in size)
+                    and min(size[0], size[1]) >= CARVE_MIN_SLAB_XY):
+                center = [(sl_min[i] + sl_max[i]) * 0.5 for i in range(3)]
+                result.append((tuple(center), tuple(size)))
+        # after-hole slab
+        if ov_max[axis] < rem_max[axis] - 1e-6:
+            sl_min = list(rem_min)
+            sl_max = list(rem_max)
+            sl_min[axis] = ov_max[axis]
+            size = [sl_max[i] - sl_min[i] for i in range(3)]
+            if (all(s > eps for s in size)
+                    and min(size[0], size[1]) >= CARVE_MIN_SLAB_XY):
+                center = [(sl_min[i] + sl_max[i]) * 0.5 for i in range(3)]
+                result.append((tuple(center), tuple(size)))
+        # remaining 收紧到 hole 在该轴的区间
+        rem_min[axis] = ov_min[axis]
+        rem_max[axis] = ov_max[axis]
+    return result
+
+
+def carve_box_with_holes(center, size, holes):
+    """对 (center, size) 依次减去每个 hole（(mn, mx) tuple），返回最终 box 列表"""
+    boxes = [(tuple(center), tuple(size))]
+    for hmn, hmx in holes:
+        new = []
+        for c, s in boxes:
+            new.extend(subtract_aabb(c, s, hmn, hmx))
+        boxes = new
+        if not boxes:
+            break
+    return boxes
+
+
+def recreate_collision_free_markers(saved_markers, coll):
+    """把保存的 collision_free* bbox 重新建成 hidden mesh，导出后下次跑脚本仍能扫到。
+    名字不带 R_/C_/P_/M_ 前缀 → 运行时 src/content/mod.rs 归 Cat::Skip 忽略"""
+    for mn, mx, name in saved_markers:
+        center = ((mn[0] + mx[0]) * 0.5,
+                  (mn[1] + mx[1]) * 0.5,
+                  (mn[2] + mx[2]) * 0.5)
+        size = (mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2])
+        obj = create_mesh_obj(name, [(center, size)], coll)
+        try:
+            obj.hide_set(True)
+        except RuntimeError:
+            obj.hide_viewport = True
+
+
+# -------------------- v16: 自包含场景准备 --------------------
+
+def wipe_scene():
+    """彻底清空：所有 mesh/empty/light/camera 对象 + collections 里的孤儿数据"""
+    if bpy.context.object and bpy.context.object.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    for o in list(bpy.data.objects):
+        bpy.data.objects.remove(o, do_unlink=True)
+    # 清空孤儿数据（避免名字冲突累积）
+    for block in (bpy.data.meshes, bpy.data.materials,
+                  bpy.data.images, bpy.data.textures):
+        for db in list(block):
+            if db.users == 0:
+                block.remove(db)
+    # 移除非 master 的 collection
+    for coll in list(bpy.data.collections):
+        bpy.data.collections.remove(coll)
+
+
+def import_source_glb(path):
+    """import 源 surveillance_room GLB 到当前场景"""
+    if not _os.path.isfile(path):
+        print(f"[finalize] FATAL: source GLB not found: {path}")
+        return False
+    try:
+        bpy.ops.import_scene.gltf(filepath=path)
+        return True
+    except Exception as e:
+        print(f"[finalize] FATAL: glTF import failed: {e}")
+        return False
+
+
 
 
 def main():
     print("=" * 64)
-    print(f"[finalize v2] start  tag={SCRIPT_TAG}")
+    print(f"[finalize] start  tag={SCRIPT_TAG}  CLEAN_IMPORT={CLEAN_IMPORT}")
 
-    if bpy.context.object and bpy.context.object.mode != "OBJECT":
-        bpy.ops.object.mode_set(mode="OBJECT")
-    for o in bpy.data.objects:
-        o.select_set(False)
+    # v26/31: wipe 前先抢救 collision_free* 标记的 bbox
+    # v31: 如果当前 .blend 没有 marker，自动从输出 GLB 里读
+    global _COLLISION_FREE_BBOXES
+    _COLLISION_FREE_BBOXES = gather_collision_free()
+    if _COLLISION_FREE_BBOXES:
+        print(f"[finalize] markers from CURRENT scene: "
+              f"{[m[2] for m in _COLLISION_FREE_BBOXES]}")
+    else:
+        print(f"[finalize] 当前 .blend 无 collision_free marker，尝试从输出 GLB 读...")
+        _COLLISION_FREE_BBOXES = try_read_markers_from_output_glb(OUTPUT_SCENE_GLB)
+        if _COLLISION_FREE_BBOXES:
+            print(f"[finalize] markers from OUTPUT GLB: "
+                  f"{[m[2] for m in _COLLISION_FREE_BBOXES]}")
+        else:
+            print(f"[finalize] 输出 GLB 也没有 collision_free marker（跳过 carve）")
+    if _COLLISION_FREE_BBOXES:
+        notes = []
+        if COLLISION_FREE_AUTO_EXTEND_Y:
+            notes.append("Y→full room")
+        if COLLISION_FREE_AUTO_EXTEND_Z:
+            notes.append("Z→full height")
+        ext_note = f" (auto-extend: {', '.join(notes)})" if notes else ""
+        print(f"[finalize] collision_free markers preserved: "
+              f"{[m[2] for m in _COLLISION_FREE_BBOXES]}{ext_note}")
+        for mn3, mx3, name in _COLLISION_FREE_BBOXES:
+            print(f"[finalize]   {name}: "
+                  f"x=[{mn3[0]:+.2f},{mx3[0]:+.2f}] "
+                  f"y=[{mn3[1]:+.2f},{mx3[1]:+.2f}] "
+                  f"z=[{mn3[2]:+.2f},{mx3[2]:+.2f}]")
+
+    if CLEAN_IMPORT:
+        wipe_scene()
+        print(f"[finalize] wiped scene clean")
+        ok = import_source_glb(SOURCE_GLB)
+        if not ok:
+            return
+        n_imp = len(bpy.data.objects)
+        print(f"[finalize] imported {SOURCE_GLB}")
+        print(f"[finalize]   -> {n_imp} objects in scene")
+    else:
+        if bpy.context.object and bpy.context.object.mode != "OBJECT":
+            bpy.ops.object.mode_set(mode="OBJECT")
+        for o in bpy.data.objects:
+            o.select_set(False)
 
     removed = clear_previous_run()
     print(f"[finalize] cleared {removed} objects from previous runs")
@@ -893,8 +1562,28 @@ def main():
     build_door(door_cx, y_min, render_coll, collision_coll)
     build_trim(cx, cy, x_min, x_max, y_min, y_max, door_cx, render_coll)
 
+    print(f"[finalize] --- device collision generation ---")
     n_col = build_device_collision(devices, collision_coll)
-    print(f"[finalize] generated {n_col} C_ship_* proxies")
+    print(f"[finalize] generated {n_col} C_ship_* proxies (covers {len(devices)} R_ship_* devices)")
+
+    # v25: 走道净宽分析（每个 C_ship_* 到 4 面墙的最短距离）
+    print(f"[finalize] --- 走道净宽分析（C_ship_* 边缘 → 墙内表面）---")
+    wall_x_min = x_min            # 墙的内表面
+    wall_x_max = x_max
+    wall_y_min = y_min
+    wall_y_max = y_max
+    for o in collision_coll.objects:
+        if not o.name.startswith("C_ship_"):
+            continue
+        cmn, cmx = world_bbox([o])
+        gap_xneg = cmn.x - wall_x_min
+        gap_xpos = wall_x_max - cmx.x
+        gap_yneg = cmn.y - wall_y_min
+        gap_ypos = wall_y_max - cmx.y
+        warn = "  ⚠ <0.5m" if min(gap_xneg, gap_xpos, gap_yneg, gap_ypos) < 0.5 else ""
+        print(f"[finalize]   {o.name}: "
+              f"-X={gap_xneg:.2f}  +X={gap_xpos:.2f}  "
+              f"-Y={gap_yneg:.2f}  +Y={gap_ypos:.2f}{warn}")
 
     # 墙：4 面独立材质，按距屏幕/朝向区分亮暗
     # 屏幕装置朝 -Y 辐射柠檬土黄光：
@@ -904,28 +1593,36 @@ def main():
     # ramp_lo/hi 控制亮斑占比（lo 越大暗区越多；hi 越大亮区越窄）
     # v9: rust 提饱和（高光更鲜艳柠檬土黄），让方向性差异更突出
     # ±Y 墙：均匀方向性（仍用 rusty_iron）
-    # v14: 4 面墙统一深橄榄屎色（放弃方向性区分——PA 要的是统一阴影感）
-    # 色相严格保留橄榄绿调（G > R > B），亮度极低，4 面共用同一 spec
-    wall_spec = dict(
-        dark=(0.006, 0.008, 0.002, 1.0),    # 几乎纯黑橄榄
-        rust=(0.038, 0.046, 0.012, 1.0),    # 深橄榄屎（G略>R，绿调）
-        scale=3.5, ramp_lo=0.60, ramp_hi=0.90,
-        roughness=0.95, metallic=0.08, distortion=1.8)
-    for name in ("R_wall_xpos", "R_wall_xneg",
-                 "R_wall_ypos", "R_wall_yneg"):
-        if (o := bpy.data.objects.get(name)):
-            assign_rusty_iron(o, "ship_wall_unified_olive", **wall_spec)
-    print(f"[finalize] walls: unified deep-olive (4 sides same spec)")
+    # v17: 4 面墙 subdivide + 区域生长 BFS 补丁分配
+    # 权重 [5,4,3,3,2,2,1] → wall_olive_0/1(极暗)占比最大，wall_olive_6(偏亮)只 1/20
+    # cuts=6 → 7×7=49 quads/面 × 6 面 = 294 quads/box（足够补丁分辨率）
+    # patch_min=2 / patch_max=14 / grow_prob=0.62 → 多数补丁 4-10 quads，少数 2-3 或 12-14
+    palette_weights = [5, 4, 3, 3, 2, 2, 1]
+    for idx, wall_name in enumerate(
+            ("R_wall_xpos", "R_wall_xneg",
+             "R_wall_ypos", "R_wall_yneg")):
+        o = bpy.data.objects.get(wall_name)
+        if o is None:
+            continue
+        subdivide_mesh(o, cuts=WALL_SUBDIV_CUTS)
+        n_patches = assign_patches_by_region_grow(
+            o, _WALL_PALETTE, weights=palette_weights, seed=idx * 991 + 17,
+            patch_min=2, patch_max=14, grow_prob=0.62)
+        print(f"[finalize]   {wall_name}: "
+              f"{len(o.data.polygons)} quads grouped into ~{n_patches} patches "
+              f"({len(_WALL_PALETTE)} olive shades)")
+    print(f"[finalize] walls: region-grow patches (irregular weld-plate look)")
 
-    # 其余构件用简单 BSDF（v11: door 改单板，去除 left/right）
+    # v19: 门构件全部纯色（不再补丁），用强对比警示橙棕跟橄榄墙拉开
     mat_assignments = [
         ("R_ceiling", "ceiling"),
         ("R_baseboard", "baseboard"),
         ("R_crown", "crown"),
-        ("R_door_panel", "door"),
-        ("R_door_handle", "handle"),
+        ("R_door_panel", "door_solid"),
+        ("R_door_wheel", "wheel"),
         ("R_door_panel_ctrl", "panel"),
-        ("R_door_frame", "door_frame"),
+        ("R_door_band", "door_band"),
+        ("R_door_rivets", "rivet"),
     ]
     n_mat = 0
     for obj_name, mat_key in mat_assignments:
@@ -935,42 +1632,19 @@ def main():
             n_mat += 1
     print(f"[finalize] assigned PBR materials to {n_mat} render objects")
 
-    # goggles v12: 显式名字映射（GOGGLES_PART_MAP）+ shell fallback
-    # 首次跑时 map 为空 → 全部 shell；同时打印诊断让 PA 填 map
-    gg = [o for o in bpy.data.objects
-          if o.type == "MESH" and o.name.startswith("R_goggles")]
-    print("[finalize] --- goggle parts diagnostic (粘给我决定分区) ---")
-    for o in gg:
-        mn, mx = world_bbox([o])
-        sz = mx - mn
-        ct = (mn + mx) * 0.5
-        key = GOGGLES_PART_MAP.get(o.name, "goggles_shell")
-        assign_material(o, key)
-        print(f"[finalize]   {o.name}")
-        print(f"[finalize]     verts={len(o.data.vertices)}  "
-              f"size=({sz.x:.3f},{sz.y:.3f},{sz.z:.3f})  "
-              f"center=({ct.x:+.3f},{ct.y:+.3f},{ct.z:+.3f})  "
-              f"-> {key}")
-    print(f"[finalize] goggles: {len(gg)} parts, "
-          f"map has {len(GOGGLES_PART_MAP)} explicit entries "
-          f"(rest fallback to goggles_shell)")
-
     # spawn：门内侧 0.8m
     spawn = (cx, y_min + 0.8, 0.0)
     add_empty("M_spawn_main", spawn, markers_coll, "ARROWS", 0.4)
     print(f"[finalize] M_spawn_main at ({spawn[0]:+.2f},{spawn[1]:+.2f},{spawn[2]:+.2f})")
 
-    g = find_goggles_center()
-    if g is None:
-        print("[finalize] WARN: 找不到 goggles")
-    else:
-        add_empty("M_interact_vr_headset",
-                  (g.x, g.y, g.z), markers_coll, "SPHERE", 0.2)
-        print(f"[finalize] M_interact_vr_headset at "
-              f"({g.x:+.2f},{g.y:+.2f},{g.z:+.2f})")
-
     hide_collision_viewport(collision_coll)
     print(f"[finalize] hidden {len(collision_coll.objects)} collision objects in viewport")
+
+    # v26: 重建 collision_free* 标记到场景（持久化到下次跑脚本）
+    if _COLLISION_FREE_BBOXES:
+        recreate_collision_free_markers(_COLLISION_FREE_BBOXES, markers_coll)
+        print(f"[finalize] recreated {len(_COLLISION_FREE_BBOXES)} "
+              f"collision_free markers (hidden, no prefix → runtime ignores)")
 
     print("[finalize] DONE.")
     print("[finalize] 导出前：选所有 R_/C_ → Ctrl+A → All Transforms")
