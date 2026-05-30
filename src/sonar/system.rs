@@ -268,6 +268,10 @@ fn color_for(surface: Surface, tag: HitTag) -> Color {
     if tag == HitTag::Danger {
         return Color::new(jitter10(1.00), jitter10(0.42), jitter10(0.32), 1.0);
     }
+    // Structure：人造建筑/残骸/尸骨——黄色，区别于地形 + 登陆仓的青色。
+    if tag == HitTag::Structure {
+        return Color::new(jitter10(1.00), jitter10(0.82), jitter10(0.12), 1.0);
+    }
     match surface {
         Surface::Wall => Color::new(0.25, gen_range(0.75f32, 1.0), gen_range(0.85f32, 1.0), 1.0),
         Surface::Floor => Color::new(0.10, gen_range(0.70f32, 0.9), gen_range(0.55f32, 0.75), 1.0),

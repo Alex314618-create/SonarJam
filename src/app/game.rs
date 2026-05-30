@@ -491,7 +491,8 @@ impl GameApp {
                         let world = &self.worlds[self.current_idx];
                         // 记录本帧水平移动前的位置，用来在陡崖处撤销
                         let p_before = self.player.position();
-                        self.player.update(dt, world, true, 1.0, PLAYER_RADIUS);
+                        // Earth 走 / 跑速度倍率 0.5（PA 要求小人感觉）
+                        self.player.update(dt, world, true, 0.5, PLAYER_RADIUS);
                         let p_after = self.player.position();
                         let gy_before = world.ground_y_at(p_before.x, p_before.z);
                         let gy_after = world.ground_y_at(p_after.x, p_after.z);

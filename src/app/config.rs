@@ -7,8 +7,8 @@ pub const CLEAR_COLOR: Color = Color::new(0.01, 0.01, 0.02, 1.0);
 // --- 玩家 ---
 pub const PLAYER_HEIGHT: f32 = 2.0;
 /// Earth 模式眼高：玩家身体落在 R_ 真山表面后，眼睛距地面的高度。
-/// 1.7 ≈ 人类平均眼高。spawn 也用这个 + 地面 y。
-pub const EARTH_EYE_HEIGHT: f32 = 1.7;
+/// 0.85 ≈ 半个真人，匍匐前进/小人感觉。
+pub const EARTH_EYE_HEIGHT: f32 = 0.85;
 /// 玩家可步行斜率上限（dy/dx_水平）。0.70 ≈ tan(35°)，超过 = 悬崖，水平移动被拒。
 pub const MAX_WALK_SLOPE: f32 = 0.70;
 /// Y 向地面 lerp 速率（1/秒）。12.0 ≈ 80ms 半衰期；缓坡丝滑，无传送感。
@@ -75,7 +75,7 @@ pub const MAX_BEAM_LINES: usize = 12;
 // --- Ship 模式（开场飞船舱）---
 /// 走路速度倍率（相对 Earth 模式）。Ship 模式 = 真实人类舱内步速。
 pub const SHIP_WALK_SPEED_MUL: f32 = 0.50;
-/// Ship 模式眼睛距 spawn 地面的高度（相对参考；Earth 用 PLAYER_HEIGHT=2.0）
+/// Ship 模式眼睛距 spawn 地面的高度（相对参考；Earth 用 EARTH_EYE_HEIGHT）
 pub const SHIP_EYE_HEIGHT: f32 = 0.9;
 /// Ship spawn y 微调：在 AABB.min.y 之上抬高这么多再加 SHIP_EYE_HEIGHT，
 /// 用于补偿 GLB 里地板不在 y=0 的情况（默认 0；PA 觉得人浮空就调正）。

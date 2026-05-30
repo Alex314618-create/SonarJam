@@ -96,12 +96,15 @@ impl HitTag {
     /// 从 Blender 对象名识别 tag。**Danger 优先于 Structure**（同名命中危险 token 即视为危险）。
     pub fn from_name(name: &str) -> Self {
         let n = name.to_lowercase();
+        // 红色（Danger）当前**未启用**——保留 token 供后续 gameplay 危险物用
+        // （例如「虚假的大鲸鱼尸体」会被扫描标记成红色 = 当时再加 token）。
         let danger_kw = [
-            "danger", "hazard", "corpse", "threat", "trap", "blood",
+            "danger", "hazard", "threat", "trap", "blood",
         ];
+        // 黄色（Structure）= 一切人造结构 + 尸骨——扫到时区别于地形/登陆仓的青色。
         let structure_kw = [
             "human", "building", "structure", "ruin", "camp",
-            "settlement", "wreck", "debris",
+            "settlement", "wreck", "debris", "corpse",
         ];
         if danger_kw.iter().any(|k| n.contains(k)) {
             HitTag::Danger
