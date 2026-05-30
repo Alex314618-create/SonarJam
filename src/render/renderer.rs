@@ -172,7 +172,8 @@ impl Renderer {
         }
 
         // ---- 4. 枪口细线：2D 屏幕空间，从右下枪口连到本帧新生点 ----
-        let muzzle = vec2(screen_width() - 74.0, screen_height() - 64.0);
+        // muzzle 位置与 UI 里 sonar gun 贴图共用同一公式（ui::system::muzzle_screen_pos）。
+        let muzzle = crate::ui::system::muzzle_screen_pos(vec2(screen_width(), screen_height()));
         let beams: Vec<&Point> = sonar.new_points().collect();
         if !beams.is_empty() {
             let step = (beams.len() / MAX_BEAM_LINES).max(1);

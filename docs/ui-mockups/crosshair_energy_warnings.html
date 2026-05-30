@@ -2,83 +2,619 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<title>SonarJam HUD — 十字准星 / 能量圆 / 警告</title>
+<title>SonarJam HUD — Helmet Visor</title>
 <style>
-  /* === 全局：模拟游戏黑背景 === */
-  body {
-    margin: 0;
-    height: 100vh;
-    background: #050608;
-    color: #c8e8f0;
-    font-family: "DM Mono", "Consolas", monospace;
-    overflow: hidden;
+  :root {
+    --ink-dim:    rgba(150, 188, 198, 0.38);
+    --ink-mid:    rgba(184, 218, 226, 0.66);
+    --ink-strong: rgba(228, 244, 247, 0.88);
+    --line-soft:  rgba(150, 188, 198, 0.10);
+    --line-mid:   rgba(170, 206, 216, 0.22);
+    --line-warm:  rgba(232, 196, 142, 0.36);
+    --ink-warm:   rgba(244, 218, 176, 0.84);
+    --warn-line:  rgba(232, 128, 104, 0.46);
+    --warn-ink:   rgba(248, 212, 198, 0.90);
+    --bio-pulse:  rgba(208, 116, 132, 0.74);
+    --energy-fill: rgba(108, 156, 176, 0.78);
   }
 
-  /* === 视窗（按 1920×1080 设计基准） === */
+  @keyframes breathe {
+    0%, 100% { opacity: 0.62; }
+    50%      { opacity: 0.92; }
+  }
+  @keyframes heartbeat {
+    0%, 70%, 100% { transform: scale(1);   opacity: 0.55; }
+    8%            { transform: scale(1.35); opacity: 1; }
+    20%           { transform: scale(1);   opacity: 0.55; }
+    28%           { transform: scale(1.18); opacity: 0.85; }
+    40%           { transform: scale(1);   opacity: 0.55; }
+  }
+  @keyframes warn-pulse {
+    0%, 100% { opacity: 0.70; }
+    50%      { opacity: 1; }
+  }
+  @keyframes static-drift {
+    0%   { transform: translateY(0); }
+    100% { transform: translateY(4px); }
+  }
+  /* 一次"哈"：快速形成 → 短暂悬停 → 向上散开 */
+  @keyframes breath-once {
+    0%   { opacity: 0;                                  transform: translateX(var(--x, 0))                              translateY(26px)  scale(var(--s0, 0.94)) rotate(var(--r0, 0deg)); }
+    18%  { opacity: var(--peak, 0.32);                                                                                                                                                  }
+    38%  { opacity: calc(var(--peak, 0.32) * 0.78);                                                                                                                                     }
+    66%  { opacity: calc(var(--peak, 0.32) * 0.34);     transform: translateX(calc(var(--x, 0) + var(--dx, 6px)))       translateY(-16px) scale(var(--s1, 1.32)) rotate(var(--r1, 3deg)); }
+    100% { opacity: 0;                                  transform: translateX(calc(var(--x, 0) + var(--dx, 6px) * 1.6)) translateY(-44px) scale(var(--s2, 1.58)) rotate(var(--r2, -2deg)); }
+  }
+
+  html, body {
+    margin: 0;
+    background: #020304;
+    color: var(--ink-mid);
+    font-family: "Rajdhani", "Bahnschrift", "Segoe UI", sans-serif;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+  }
+  /* 缩放容器：viewport 通过 transform: scale() 适配窗口 */
+  .stage {
+    position: absolute;
+    left: 50%; top: 0;
+    transform-origin: top center;
+    will-change: transform;
+  }
+  .zoom-hint {
+    position: fixed;
+    right: 10px; bottom: 8px;
+    font-family: "DM Mono", "Consolas", monospace;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: rgba(180, 220, 230, 0.32);
+    pointer-events: none;
+    user-select: none;
+    z-index: 99;
+  }
+
+  /* ============================================================
+     视窗：1920x1080 设计基准
+     ============================================================ */
   .viewport {
     position: relative;
     width: 1920px;
     height: 1080px;
     margin: 0 auto;
-    background: radial-gradient(circle at center, #0a0c10 0%, #050608 80%);
+    background:
+      radial-gradient(circle at 50% 48%, rgba(20, 38, 46, 0.18) 0%, rgba(6, 12, 16, 0.05) 38%, rgba(2, 4, 6, 0) 62%),
+      radial-gradient(circle at 50% 55%, #0a1318 0%, #050a0d 56%, #02050a 100%);
+    overflow: hidden;
   }
 
   /* ============================================================
-     ELEMENT: crosshair
-     anchor: center
-     data: 静态（无绑定）
-     设计基准：以 128px 准星源框为 1x 设计尺寸，可按 2x 超采样导出
+     面罩玻璃曲率：四向暗角，左右更深，模拟头盔边缘视野压缩
+     ============================================================ */
+  .visor-curve {
+    position: absolute; inset: 0;
+    pointer-events: none;
+    background:
+      /* 左右两侧的头盔玻璃边缘阴影 */
+      radial-gradient(ellipse 38% 110% at 0% 50%,    rgba(0,0,0,0.78) 0%, rgba(0,0,0,0.32) 28%, transparent 56%),
+      radial-gradient(ellipse 38% 110% at 100% 50%,  rgba(0,0,0,0.78) 0%, rgba(0,0,0,0.32) 28%, transparent 56%),
+      /* 顶部头盔下沿压暗 */
+      radial-gradient(ellipse 120% 36% at 50% 0%,    rgba(0,0,0,0.62) 0%, rgba(0,0,0,0.22) 34%, transparent 64%),
+      /* 底部颈圈阴影更深 */
+      radial-gradient(ellipse 130% 28% at 50% 100%,  rgba(0,0,0,0.72) 0%, rgba(0,0,0,0.28) 36%, transparent 62%);
+  }
+
+  /* 面罩玻璃反光：右上一片冷蓝偏色 + 左上一片暖白高光，模拟里面照明灯反射在镜片上 */
+  .visor-reflect {
+    position: absolute; inset: 0;
+    pointer-events: none;
+    mix-blend-mode: screen;
+    opacity: 0.35;
+    background:
+      radial-gradient(ellipse 540px 220px at 22% 18%, rgba(220, 235, 245, 0.18) 0%, transparent 70%),
+      radial-gradient(ellipse 420px 180px at 78% 14%, rgba(110, 168, 196, 0.22) 0%, transparent 72%),
+      radial-gradient(ellipse 300px 120px at 88% 78%, rgba(150, 188, 210, 0.12) 0%, transparent 70%);
+  }
+
+  /* 面罩涂层：极淡的微噪点/扫描线 */
+  .visor-coating {
+    position: absolute; inset: 0;
+    pointer-events: none;
+    opacity: 0.18;
+    background:
+      repeating-linear-gradient(
+        180deg,
+        rgba(180, 220, 230, 0.04) 0,
+        rgba(180, 220, 230, 0.04) 1px,
+        transparent 1px,
+        transparent 3px
+      );
+    animation: static-drift 2.6s steps(2) infinite;
+  }
+
+  /* ============================================================
+     头盔下沿：底部一道暗弧 + 微弱反射条，
+     模拟透过头盔看到自己鼻梁下方的金属边
+     ============================================================ */
+  .helmet-rim-bottom {
+    position: absolute;
+    left: 0; right: 0; bottom: -40px;
+    height: 240px;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse 80% 100% at 50% 100%,
+        rgba(8, 14, 18, 0.95) 0%,
+        rgba(8, 14, 18, 0.55) 40%,
+        transparent 72%);
+  }
+  /* 底部金属反射条已移除 */
+
+  /* ============================================================
+     ELEMENT: breath_fog
+     呼吸雾气：两片极淡的椭圆，从下沿微微升起
+     绝不影响中心视野，4.4s 一次吸-呼-散
+     ============================================================ */
+  .breath-fog {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 420px;
+    pointer-events: none;
+    overflow: hidden;
+    /* 整组雾气都被 turbulence 滤镜扭曲，得到不规则有机边缘 */
+    filter: url(#fog-warp);
+  }
+  /* 单个 puff：由 JS 按需生成、播完即销毁。不再自循环。 */
+  .breath-fog .puff {
+    position: absolute;
+    left: 50%;
+    bottom: 70px;
+    width: 420px;
+    height: 200px;
+    margin-left: -210px;
+    border-radius: 50%;
+    /* 中心更实，像一团哈气 */
+    background: radial-gradient(ellipse 55% 50% at 50% 65%,
+      rgba(224, 238, 244, 0.36) 0%,
+      rgba(218, 234, 242, 0.20) 26%,
+      rgba(212, 232, 240, 0.07) 52%,
+      transparent 78%);
+    will-change: transform, opacity;
+    opacity: 0;
+    pointer-events: none;
+  }
+  /* 演示模式：单次"哈"会比常规更显眼 */
+  .breath-fog .puff.demo { --peak: 0.78; }
+
+  /* ============================================================
+     ELEMENT: helmet_corners
+     极小的头盔内部接口锚点（不是网页边框）
+     ============================================================ */
+  .helmet-corner {
+    position: absolute;
+    width: 64px; height: 64px;
+    pointer-events: none;
+    opacity: 0.32;
+  }
+  .helmet-corner.tl { top: 38px; left: 48px; }
+  .helmet-corner.tr { top: 38px; right: 48px; transform: scaleX(-1); }
+  .helmet-corner.bl { bottom: 60px; left: 48px; transform: scaleY(-1); }
+  .helmet-corner.br { bottom: 60px; right: 48px; transform: scale(-1, -1); }
+  .helmet-corner::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0;
+    width: 22px; height: 1px;
+    background: var(--ink-mid);
+  }
+  .helmet-corner::after {
+    content: "";
+    position: absolute;
+    top: 0; left: 0;
+    width: 1px; height: 22px;
+    background: var(--ink-mid);
+  }
+  .helmet-corner .dot {
+    position: absolute;
+    top: 4px; left: 4px;
+    width: 3px; height: 3px;
+    border: 1px solid var(--ink-mid);
+    border-radius: 50%;
+  }
+
+  /* ============================================================
+     ELEMENT: suit_vitals (top-left, deep corner)
+     生命体征 — 氧气 / 舱压 / 体温
+     不喧宾夺主，斜置贴近面罩边缘
+     ============================================================ */
+  .suit-vitals {
+    position: absolute;
+    /* 让位给左上角的警告卡片 */
+    top: 280px; left: 108px;
+    width: 220px;
+    color: var(--ink-mid);
+    font-size: 10px;
+    letter-spacing: 0.20em;
+    text-transform: uppercase;
+    animation: breathe 5.4s ease-in-out infinite;
+  }
+  .suit-vitals .head {
+    color: var(--ink-dim);
+    font-size: 9px;
+    letter-spacing: 0.32em;
+    margin-bottom: 14px;
+  }
+  .suit-vitals .head::before {
+    content: "";
+    display: inline-block;
+    width: 18px; height: 1px;
+    background: var(--ink-dim);
+    vertical-align: middle;
+    margin-right: 10px;
+    transform: translateY(-1px);
+  }
+  .suit-vitals .row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .suit-vitals .row:last-child { border-bottom: none; }
+  .suit-vitals .label { color: var(--ink-dim); }
+  .suit-vitals .val {
+    font-family: "DM Mono", "Consolas", monospace;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    color: var(--ink-strong);
+  }
+  .suit-vitals .val small {
+    margin-left: 2px;
+    color: var(--ink-dim);
+    font-size: 9px;
+  }
+  .suit-vitals .val.warm { color: var(--ink-warm); }
+
+  /* ============================================================
+     ELEMENT: bio_signs (top-right)
+     心率 + 呼吸 — 带心跳脉动点
+     ============================================================ */
+  .bio-signs {
+    position: absolute;
+    top: 96px; right: 108px;
+    width: 200px;
+    color: var(--ink-mid);
+    font-size: 10px;
+    letter-spacing: 0.20em;
+    text-transform: uppercase;
+    text-align: right;
+  }
+  .bio-signs .head {
+    color: var(--ink-dim);
+    font-size: 9px;
+    letter-spacing: 0.32em;
+    margin-bottom: 14px;
+  }
+  .bio-signs .head::after {
+    content: "";
+    display: inline-block;
+    width: 18px; height: 1px;
+    background: var(--ink-dim);
+    vertical-align: middle;
+    margin-left: 10px;
+    transform: translateY(-1px);
+  }
+  .bio-signs .row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .bio-signs .row:last-child { border-bottom: none; }
+  .bio-signs .label { color: var(--ink-dim); }
+  .bio-signs .val {
+    font-family: "DM Mono", "Consolas", monospace;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    color: var(--ink-strong);
+  }
+  .bio-signs .heart {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--bio-pulse);
+    margin-right: 8px;
+    box-shadow: 0 0 6px rgba(208, 116, 132, 0.6);
+    animation: heartbeat 1.05s ease-in-out infinite;
+    transform-origin: center;
+  }
+
+  /* ============================================================
+     ELEMENT: comms_log (bottom-left)
+     舱外通讯回音 — 偷听式短句，强叙事代入感
+     ============================================================ */
+  .comms-log {
+    position: absolute;
+    bottom: 120px; left: 108px;
+    width: 360px;
+  }
+  .comms-log .head {
+    color: var(--ink-dim);
+    font-size: 9px;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  .comms-log .head::before {
+    content: "";
+    display: inline-block;
+    width: 5px; height: 5px;
+    background: rgba(170, 220, 232, 0.55);
+    border-radius: 50%;
+    margin-right: 10px;
+    vertical-align: middle;
+    transform: translateY(-1px);
+    animation: breathe 1.8s ease-in-out infinite;
+  }
+  .comms-log .line {
+    display: flex;
+    gap: 12px;
+    align-items: baseline;
+    margin-top: 6px;
+    font-family: "DM Mono", "Consolas", monospace;
+    font-size: 11px;
+    letter-spacing: 0.02em;
+    line-height: 1.55;
+    color: var(--ink-strong);
+  }
+  .comms-log .line .who {
+    flex: 0 0 auto;
+    color: var(--ink-dim);
+    font-size: 9px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    min-width: 64px;
+  }
+  .comms-log .line .msg {
+    font-style: italic;
+    color: var(--ink-mid);
+  }
+  .comms-log .line.fresh .msg { color: var(--ink-strong); font-style: normal; }
+  .comms-log .line.dim   { opacity: 0.55; }
+  .comms-log .line.faded { opacity: 0.28; }
+
+  /* ============================================================
+     ELEMENT: suit_integrity (bottom-right)
+     悬挂式 — 套装完整性 + 电源 + 推进剂
+     ============================================================ */
+  .suit-integrity {
+    position: absolute;
+    bottom: 120px; right: 108px;
+    width: 240px;
+    text-align: right;
+  }
+  /* slim 版：贴边、更窄、更低调，给手持扫描仪让位 */
+  .suit-integrity.slim {
+    width: 140px;
+    bottom: 96px;
+    right: 96px;
+  }
+  .suit-integrity.slim .head { display: none; }
+  .suit-integrity.slim .gauge { margin-top: 0; }
+  .suit-integrity.slim .gauge .lbl { font-size: 8px; letter-spacing: 0.24em; }
+  .suit-integrity.slim .gauge .lbl .v { font-size: 10px; }
+  .suit-integrity .head {
+    color: var(--ink-dim);
+    font-size: 9px;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+  .suit-integrity .head::after {
+    content: "";
+    display: inline-block;
+    width: 18px; height: 1px;
+    background: var(--ink-dim);
+    vertical-align: middle;
+    margin-left: 10px;
+    transform: translateY(-1px);
+  }
+  .suit-integrity .gauge {
+    margin-top: 12px;
+  }
+  .suit-integrity .gauge .lbl {
+    display: flex;
+    justify-content: space-between;
+    font-size: 9px;
+    letter-spacing: 0.20em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+  }
+  .suit-integrity .gauge .lbl .v {
+    font-family: "DM Mono", "Consolas", monospace;
+    color: var(--ink-strong);
+    letter-spacing: 0.04em;
+    font-size: 11px;
+  }
+  .suit-integrity .gauge .bar {
+    margin-top: 5px;
+    height: 2px;
+    background: rgba(170, 206, 216, 0.10);
+    position: relative;
+    overflow: hidden;
+  }
+  .suit-integrity .gauge .bar::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    background: linear-gradient(90deg, rgba(168, 210, 224, 0.42), rgba(200, 230, 240, 0.78));
+    width: var(--w, 80%);
+  }
+  .suit-integrity .gauge .bar.warm::before {
+    background: linear-gradient(90deg, rgba(220, 158, 110, 0.42), rgba(240, 198, 150, 0.85));
+  }
+
+  /* ============================================================
+     ELEMENT: warning_card
+     不在中心 — 偏移到准星左上方 ~ 280px，斜杠告警条
+     ============================================================ */
+  .warning-card {
+    position: absolute;
+    top: 86px;
+    left: 108px;
+    width: 320px;
+    padding: 10px 14px 12px;
+    color: var(--warn-ink);
+    border-left: 1px solid var(--warn-line);
+    border-top: 1px solid var(--warn-line);
+    background:
+      linear-gradient(135deg, rgba(232, 128, 104, 0.06) 0%, transparent 60%),
+      repeating-linear-gradient(
+        135deg,
+        rgba(232, 128, 104, 0.04) 0,
+        rgba(232, 128, 104, 0.04) 6px,
+        transparent 6px,
+        transparent 12px
+      );
+    animation: warn-pulse 1.4s ease-in-out infinite;
+  }
+  .warning-card .tag {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 9px;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: var(--warn-ink);
+  }
+  .warning-card .tag::before {
+    content: "";
+    width: 10px; height: 10px;
+    border-top: 1px solid var(--warn-line);
+    border-right: 1px solid var(--warn-line);
+    transform: rotate(45deg);
+    display: inline-block;
+  }
+  .warning-card .msg {
+    margin-top: 6px;
+    font-family: "DM Mono", "Consolas", monospace;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    line-height: 1.5;
+    color: var(--ink-strong);
+  }
+  .warning-card .sub {
+    margin-top: 4px;
+    font-size: 9px;
+    letter-spacing: 0.20em;
+    text-transform: uppercase;
+    color: rgba(232, 196, 178, 0.58);
+  }
+
+  /* ============================================================
+     ELEMENT: compass_arc
+     顶部正中：极细弧形罗盘，仅作方位提示，几乎透明
+     ============================================================ */
+  .compass-arc {
+    position: absolute;
+    top: 52px; left: 50%;
+    transform: translateX(-50%);
+    width: 560px;
+    color: var(--ink-dim);
+    font-size: 9px;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    text-align: center;
+  }
+  .compass-arc .rail {
+    position: relative;
+    height: 22px;
+    margin-bottom: 6px;
+    overflow: hidden;
+    /* 左右淡出遮罩 */
+    mask-image: linear-gradient(90deg, transparent 0%, #000 12%, #000 88%, transparent 100%);
+    -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 12%, #000 88%, transparent 100%);
+  }
+  /* 顶部基线已移除 */
+  .compass-arc .tape {
+    position: absolute;
+    left: 50%; bottom: 0;
+    height: 100%;
+    will-change: transform;
+  }
+  .compass-arc .tape .tick {
+    position: absolute; bottom: 0;
+    width: 1px; height: 5px;
+    background: var(--ink-dim);
+    transform: translateX(-50%);
+  }
+  .compass-arc .tape .tick.major { height: 10px; background: var(--ink-mid); }
+  .compass-arc .tape .lbl {
+    position: absolute;
+    bottom: 11px;
+    transform: translateX(-50%);
+    color: var(--ink-mid);
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    white-space: nowrap;
+  }
+  .compass-arc .tape .lbl.cardinal { color: var(--ink-strong); font-weight: 600; }
+  .compass-arc .center {
+    position: absolute;
+    left: 50%; bottom: -4px;
+    width: 1px; height: 14px;
+    background: var(--ink-strong);
+    transform: translateX(-50%);
+    box-shadow: 0 0 6px rgba(228, 244, 247, 0.5);
+    pointer-events: none;
+  }
+  .compass-arc .bearing {
+    font-family: "DM Mono", "Consolas", monospace;
+    font-size: 11px;
+    letter-spacing: 0.10em;
+    color: var(--ink-strong);
+  }
+  .compass-arc .bearing .drift {
+    color: var(--ink-dim);
+    margin-left: 14px;
+  }
+
+  /* ============================================================
+     ELEMENT: crosshair + energy_ring  (保留)
      ============================================================ */
   .crosshair-cluster {
     position: absolute;
-    left: 50%;
-    top: 50%;
-    width: 128px;
-    height: 128px;
+    left: 50%; top: 50%;
+    width: 128px; height: 128px;
     transform: translate(-50%, -50%);
   }
   .crosshair {
     position: absolute;
-    left: 50%;
-    top: 50%;
-    width: 1.2px;
-    height: 1.2px;
+    left: 50%; top: 50%;
+    width: 1.2px; height: 1.2px;
     transform: translate(-50%, -50%);
     background: rgba(150, 186, 198, 0.78);
     box-shadow: 0 0 2px rgba(118, 152, 164, 0.32);
   }
-  /* 十字准星的四条小臂 */
-  .crosshair::before, .crosshair::after {
+  .crosshair::before,
+  .crosshair::after {
     content: "";
     position: absolute;
     background: rgba(150, 186, 198, 0.78);
   }
-  .crosshair::before {  /* 水平 */
-    left: -4.2px;
-    top: 0;
-    width: 9.6px;
-    height: 1.2px;
+  .crosshair::before {
+    left: -4.2px; top: 0;
+    width: 9.6px; height: 1.2px;
   }
-  .crosshair::after {  /* 垂直 */
-    left: 0;
-    top: -4.2px;
-    width: 1.2px;
-    height: 9.6px;
+  .crosshair::after {
+    left: 0; top: -4.2px;
+    width: 1.2px; height: 9.6px;
   }
 
-  /* ============================================================
-     ELEMENT: energy_ring
-     anchor: center
-     data: energy_ratio (0..1)
-     表现：十字准星周围一个正五边形的 5 个角点
-     实心灰蓝 = 有能量，空心细灰边 = 没能量
-     每消耗 1 格，熄灭 1 个点；不做连续填充
-     ============================================================ */
   .energy-ring {
     position: absolute;
-    left: 50%;
-    top: 50%;
-    width: 0; height: 0;  /* 中心点；圆通过子元素的绝对偏移摆 */
+    left: 50%; top: 50%;
+    width: 0; height: 0;
   }
   .energy-ring .cell {
     position: absolute;
@@ -88,15 +624,13 @@
     transform: translate(-50%, -50%);
     transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
   }
-  /* 正五边形 5 个角点，半径约 26px，收在 128px 源框中心 */
-  .energy-ring .cell.p1 { top: -26px; left: 0; }
-  .energy-ring .cell.p2 { top: -8px; left: 25px; }
-  .energy-ring .cell.p3 { top: 21px; left: 15px; }
-  .energy-ring .cell.p4 { top: 21px; left: -15px; }
-  .energy-ring .cell.p5 { top: -8px; left: -25px; }
-  /* 实心 / 空心状态 */
+  .energy-ring .cell.p1 { top: -26px; left:   0px; }
+  .energy-ring .cell.p2 { top:  -8px; left:  25px; }
+  .energy-ring .cell.p3 { top:  21px; left:  15px; }
+  .energy-ring .cell.p4 { top:  21px; left: -15px; }
+  .energy-ring .cell.p5 { top:  -8px; left: -25px; }
   .cell.full {
-    background: rgba(108, 156, 176, 0.78);
+    background: var(--energy-fill);
     border-color: rgba(148, 160, 170, 0.85);
     box-shadow: 0 0 4px rgba(90, 132, 150, 0.22);
   }
@@ -105,97 +639,469 @@
     border-color: rgba(104, 112, 122, 0.58);
     box-shadow: none;
   }
-
-  /* ============================================================
-     ELEMENT: warning_banner
-     anchor: top-center  offset (0, 60)
-     data: 来自 warnings 队列；新警告从 0 透明度淡入到 1，停留 4s 后淡出
-     ============================================================ */
-  .warning-banner {
-    position: absolute;
-    left: 50%;
-    top: 60px;
-    transform: translateX(-50%);
-    padding: 8px 18px;
-    background: rgba(20, 8, 6, 0.7);
-    border: 1px solid rgba(220, 60, 50, 0.6);
-    border-radius: 2px;
-    color: rgba(255, 180, 175, 0.95);
-    font-size: 14px;
-    letter-spacing: 0.15em;
-    text-transform: uppercase;
-    box-shadow: 0 0 12px rgba(220, 60, 50, 0.35);
-    animation: warning-pulse 1.8s ease-in-out infinite;
-  }
-  @keyframes warning-pulse {
-    0%, 100% { opacity: 0.95; }
-    50%      { opacity: 0.6;  }
-  }
-
-  /* ============================================================
-     ELEMENT: status_log (小字，左下角，叠加多条)
-     anchor: bottom-left offset (24, -24)
-     data: 来自 system_log 队列，新条目顶部 push，旧的褪色淡出
-     ============================================================ */
-  .status-log {
-    position: absolute;
-    left: 24px;
-    bottom: 24px;
-    font-size: 11px;
-    letter-spacing: 0.1em;
-    color: rgba(140, 200, 220, 0.6);
-    line-height: 1.5;
-  }
-  .status-log .line   { opacity: 1.0; }
-  .status-log .line.dim { opacity: 0.4; }
-  .status-log .line.faded { opacity: 0.15; }
-
-  /* 标签 */
-  .label { position: absolute; font-size: 10px; color: rgba(120,160,180,0.4); }
 </style>
 </head>
 <body>
+  <div class="stage" data-hud="stage">
   <div class="viewport">
 
-    <!-- ============================================================
-         十字准星
-         ============================================================ -->
-    <div class="crosshair-cluster">
-      <div class="crosshair"></div>
+    <!-- 头盔玻璃曲率：四角变暗，左右更深 -->
+    <div class="visor-curve"></div>
+    <!-- 头盔玻璃反光：里面照明灯在镜片上的高光 -->
+    <div class="visor-reflect"></div>
+    <!-- 镜片涂层：极淡的扫描线 -->
+    <div class="visor-coating"></div>
+    <!-- 头盔下沿暗弧 + 金属反射条 -->
+    <div class="helmet-rim-bottom"></div>
+    <!-- 呼吸雾气：SVG turbulence 滤镜 + 多块错相/错位的软光斑 -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <defs>
+        <!-- 较小的位移幅度 + 较低频率 → 团块更整、像哈气而不是云絮 -->
+        <filter id="fog-warp" x="-20%" y="-20%" width="140%" height="140%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.008 0.014" numOctaves="2" seed="7" result="noise">
+            <animate attributeName="baseFrequency" dur="28s" values="0.008 0.014; 0.010 0.012; 0.007 0.016; 0.008 0.014" repeatCount="indefinite"/>
+          </feTurbulence>
+          <feDisplacementMap in="SourceGraphic" in2="noise" scale="36" xChannelSelector="R" yChannelSelector="G"/>
+          <feGaussianBlur stdDeviation="1.6"/>
+        </filter>
+      </defs>
+    </svg>
+    <!-- 雾气容器：puff 由 JS 按需生成 -->
+    <div class="breath-fog" data-hud="fog"></div>
 
-      <!-- ============================================================
-           能量点：5 个，对应 5 段离散能量。
-           运行时按剩余格数决定哪几个是 .full / .empty。
-           建议：按顺时针顺序熄灭，不做连续过渡。
-           ratio=1.0 或 5/5 → 全 full
-           ratio=0.8 或 4/5 → 最后 1 个点 empty
-           ============================================================ -->
-      <div class="energy-ring">
-        <div class="cell p1 full"></div>
-        <div class="cell p2 full"></div>
-        <div class="cell p3 full"></div>
-        <div class="cell p4 full"></div>
-        <div class="cell p5 full"></div>
+    <!-- 四角头盔内部接口锚点 -->
+    <div class="helmet-corner tl"><div class="dot"></div></div>
+    <div class="helmet-corner tr"><div class="dot"></div></div>
+    <div class="helmet-corner bl"><div class="dot"></div></div>
+    <div class="helmet-corner br"><div class="dot"></div></div>
+
+    <!-- ============================================================
+         顶部细弧罗盘 — 唯一在视野上方且居中的元素
+         保持极淡，只标方位和当前朝向
+         ============================================================ -->
+    <div class="compass-arc" data-hud="compass">
+      <div class="rail">
+        <div class="tape" data-hud="compass-tape"><!-- ticks injected by JS --></div>
+      </div>
+      <div class="center"></div>
+      <div class="bearing">
+        BEARING&nbsp;&nbsp;<span data-hud="bearing-val">004°</span>
+        <span class="drift">DRIFT&nbsp;<span data-hud="drift-val">+1.7m/s</span></span>
       </div>
     </div>
 
     <!-- ============================================================
-         警告横幅（顶部中央）
-         data: warnings 队列
+         左上：套装生命体征
          ============================================================ -->
-    <div class="warning-banner">外部供电断裂 · 切换至内部电池</div>
+    <div class="suit-vitals" data-hud="vitals">
+      <div class="head">SUIT · LIFE</div>
+      <div class="row"><span class="label">T·EXT</span> <span class="val warm" data-hud="vitals.text">-89<small>°C</small></span></div>
+      <div class="row"><span class="label">T·INT</span> <span class="val" data-hud="vitals.tint">21.2<small>°C</small></span></div>
+      <div class="row"><span class="label">O₂</span>    <span class="val" data-hud="vitals.o2">78<small>%</small></span></div>
+      <div class="row"><span class="label">PRESS</span> <span class="val" data-hud="vitals.press">14.2<small>psi</small></span></div>
+      <div class="row"><span class="label">CO₂</span>   <span class="val warm" data-hud="vitals.co2">0.42<small>%</small></span></div>
+    </div>
 
     <!-- ============================================================
-         状态日志（左下，多行叠加）
-         data: system_log 队列；新的在上、旧的褪色
+         右上：生物体征
          ============================================================ -->
-    <div class="status-log">
-      <div class="line">&gt; SONAR v0.7 · 感知协议已加载</div>
-      <div class="line dim">&gt; 光学通道：屏蔽</div>
-      <div class="line dim">&gt; 声学通道：开放</div>
-      <div class="line faded">&gt; 威胁标记引擎：激活</div>
+    <div class="bio-signs" data-hud="bio">
+      <div class="head">BIO · CREW-01</div>
+      <div class="row"><span class="label">HR</span>   <span class="val"><span class="heart" data-hud="bio.heart"></span><span data-hud="bio.hr">112</span><small>bpm</small></span></div>
+      <div class="row"><span class="label">RESP</span> <span class="val"><span data-hud="bio.resp">22</span><small>/min</small></span></div>
+      <div class="row"><span class="label">SpO₂</span> <span class="val"><span data-hud="bio.spo2">96</span><small>%</small></span></div>
+      <div class="row"><span class="label">CORE</span> <span class="val"><span data-hud="bio.core">37.2</span><small>°C</small></span></div>
+    </div>
+
+    <!-- ============================================================
+         偏移告警卡片 — 不挡中心
+         ============================================================ -->
+    <div class="warning-card" data-hud="warning">
+      <div class="tag" data-hud="warning-tag">CRITICAL · POWER</div>
+      <div class="msg" data-hud="warning-msg">
+        EXTERNAL POWER LINK LOST.<br>
+        SUIT NOW RUNNING ON INTERNAL CELL.
+      </div>
+      <div class="sub" data-hud="warning-sub">
+        EST. 11:48 REMAINING · LIFE SUPPORT WILL FAIL ON DEPLETION · RETURN TO TETHER
+      </div>
+    </div>
+
+    <!-- ============================================================
+         准星 + 5 能量点 — 完全保留
+         ============================================================ -->
+    <div class="crosshair-cluster">
+      <div class="crosshair"></div>
+      <div class="energy-ring" data-hud="energy">
+        <div class="cell p1 full"></div>
+        <div class="cell p2 full"></div>
+        <div class="cell p3 full"></div>
+        <div class="cell p4 empty"></div>
+        <div class="cell p5 empty"></div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         左下：通讯回音 — 偷听式短句
+         ============================================================ -->
+    <div class="comms-log" data-hud="comms">
+      <div class="head">COMMS · CH-04</div>
+      <!-- lines injected by HUD.setComms([{who,msg}, ...]) — first item is freshest -->
+      <div class="line fresh"><span class="who">ANCHOR</span><span class="msg">"echo, your bio's spiking — slow down."</span></div>
+      <div class="line dim">  <span class="who">ECHO-3</span><span class="msg">"…copy. lattice is humming in here."</span></div>
+      <div class="line faded"><span class="who">ANCHOR</span><span class="msg">"don't trust the optical. switch to acoustic."</span></div>
+    </div>
+
+    <!-- ============================================================
+         右下：套装完整性 / 电源 / 推进剂
+         ============================================================ -->
+    <!-- 右下角只留一根细电池条，给手持扫描仪让位 -->
+    <div class="suit-integrity slim" data-hud="integrity">
+      <div class="gauge" data-hud="integrity.cell">
+        <div class="lbl"><span>CELL</span><span class="v">42%</span></div>
+        <div class="bar warm" style="--w: 42%;"></div>
+      </div>
     </div>
 
   </div>
+  </div>
+  <div class="zoom-hint">CTRL + WHEEL ZOOM · CTRL+0 RESET</div>
+
+<script>
+/* ============================================================
+   window.HUD — game data interface
+   游戏侧调用示例：
+     HUD.setBearing(132);                  // target heading; tape will swing
+     HUD.setDrift(+1.7);                   // m/s
+     HUD.nudgeBearing(-18);                // 一次性冲击（爆炸/碰撞）
+     HUD.setWarning({tag, msg, sub});      // or HUD.setWarning(null) to hide
+     HUD.setVitals({o2, press, co2, temp});
+     HUD.setBio({hr, resp, spo2, core});
+     HUD.setIntegrity({hull, cell, thrust});
+     HUD.setComms([{who, msg}, ...]);      // 第一条最新，最多 3 条
+     HUD.setEnergy(3);                     // 0..5 整数
+   ============================================================ */
+(function () {
+  const $ = (sel, root) => (root || document).querySelector(sel);
+  const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+
+  // ---- ctrl+wheel zoom -----------------------------------------------
+  const stage = $('[data-hud="stage"]');
+  const BASE_W = 1920, BASE_H = 1080;
+  let userZoom = null;   // null = 自动适配；数字 = 用户指定
+  function fitScale() {
+    return Math.min(window.innerWidth / BASE_W, window.innerHeight / BASE_H);
+  }
+  function applyZoom() {
+    const s = userZoom != null ? userZoom : fitScale();
+    stage.style.transform = `translateX(-50%) scale(${s})`;
+    // 让 stage 的宽度等于 BASE_W，垂直居中靠 top:0 + 视觉
+    stage.style.width = BASE_W + 'px';
+    stage.style.height = BASE_H + 'px';
+    // 垂直留白居中
+    const verticalSlack = Math.max(0, window.innerHeight - BASE_H * s);
+    stage.style.top = (verticalSlack / 2) + 'px';
+  }
+  applyZoom();
+  window.addEventListener('resize', applyZoom);
+  window.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    const cur = userZoom != null ? userZoom : fitScale();
+    const step = e.deltaY > 0 ? 0.92 : 1.085;
+    userZoom = Math.max(0.2, Math.min(3, cur * step));
+    applyZoom();
+  }, { passive: false });
+  window.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && (e.key === '0' || e.key === ')')) {
+      e.preventDefault();
+      userZoom = null;
+      applyZoom();
+    }
+  });
+
+  // ---- compass tape ---------------------------------------------------
+  const PX_PER_DEG = 6.0;     // tape 每度像素 — 越大转得越夸张
+  // 二阶弹簧：zeta ≈ 0.62 → 轻微过冲后柔和回摆
+  const SPRING_K     = 10.0;
+  const DAMPING      = 3.9;
+  const TORQUE_CAP   = 24.0;  // |delta| 超过此值时按上限算力，避免大跳一开始的暴力加速度
+  const VEL_CAP      = 220;   // deg/s 速度上限
+  const NOISE_AMP    = 0.10;  // 持续微抖幅度（度）
+  const NOISE_RATE_1 = 0.55;
+  const NOISE_RATE_2 = 1.30;
+
+  const tape = $('[data-hud="compass-tape"]');
+  const bearingVal = $('[data-hud="bearing-val"]');
+  const driftVal = $('[data-hud="drift-val"]');
+
+  // 生成 -180..540 的 tape，cover 一整圈 + 两侧 buffer
+  (function buildTape() {
+    const frag = document.createDocumentFragment();
+    for (let d = -180; d <= 540; d += 5) {
+      const xPx = d * PX_PER_DEG;
+      const isMajor = (d % 15) === 0;
+      const tick = document.createElement('span');
+      tick.className = 'tick' + (isMajor ? ' major' : '');
+      tick.style.left = xPx + 'px';
+      frag.appendChild(tick);
+      if (d % 30 === 0) {
+        const mod = ((d % 360) + 360) % 360;
+        const lbl = document.createElement('span');
+        const cardinal = {0:'N', 90:'E', 180:'S', 270:'W'}[mod];
+        lbl.className = 'lbl' + (cardinal ? ' cardinal' : '');
+        lbl.style.left = xPx + 'px';
+        lbl.textContent = cardinal ? cardinal : String(mod).padStart(3, '0');
+        frag.appendChild(lbl);
+      }
+    }
+    tape.appendChild(frag);
+  })();
+
+  // 弹簧动力学
+  let curBearing = 4.0;
+  let target     = 4.0;
+  let velocity   = 0;      // deg/s
+  let noisePhase = Math.random() * 1000;
+
+  function shortestDelta(from, to) {
+    let d = (to - from) % 360;
+    if (d > 180) d -= 360;
+    if (d < -180) d += 360;
+    return d;
+  }
+
+  let lastT = performance.now();
+  function tick(now) {
+    let dt = (now - lastT) / 1000;
+    lastT = now;
+    if (dt > 0.05) dt = 0.05;
+
+    // 弹簧 + 阻尼，但对 delta 做软限幅 — 大跳不会一上来就给天文级加速度
+    const delta = shortestDelta(curBearing, target);
+    const softDelta = Math.sign(delta) * Math.min(Math.abs(delta), TORQUE_CAP);
+    // 残余 delta 再附加一点点恒力，避免到位太慢
+    const tail = (Math.abs(delta) - TORQUE_CAP > 0)
+      ? Math.sign(delta) * (Math.abs(delta) - TORQUE_CAP) * 0.4
+      : 0;
+    const accel = SPRING_K * softDelta + tail - DAMPING * velocity;
+    velocity   += accel * dt;
+    if (velocity >  VEL_CAP) velocity =  VEL_CAP;
+    if (velocity < -VEL_CAP) velocity = -VEL_CAP;
+    curBearing += velocity * dt;
+
+    // 持续微抖（即使到位也在晃）— 两个低频 sin 叠加，去掉高频颤动
+    noisePhase += dt;
+    const noise = Math.sin(noisePhase * NOISE_RATE_1 * 6.28) * NOISE_AMP
+                + Math.sin(noisePhase * NOISE_RATE_2 * 6.28) * NOISE_AMP * 0.45;
+    const shown = curBearing + noise;
+
+    // 应用 tape 位移：tape 左边缘在 0°，把 shown° 对到中心
+    tape.style.transform = `translateX(${-shown * PX_PER_DEG}px)`;
+
+    // 显示数值（取整后的真实朝向，不含 noise）
+    const mod = ((Math.round(curBearing) % 360) + 360) % 360;
+    bearingVal.textContent = String(mod).padStart(3, '0') + '°';
+
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+
+  // ---- warning --------------------------------------------------------
+  const warnEl = $('[data-hud="warning"]');
+  const warnTag = $('[data-hud="warning-tag"]');
+  const warnMsg = $('[data-hud="warning-msg"]');
+  const warnSub = $('[data-hud="warning-sub"]');
+
+  function setWarning(w) {
+    if (!w) { warnEl.style.display = 'none'; return; }
+    warnEl.style.display = '';
+    if (w.tag != null) warnTag.textContent = w.tag;
+    if (w.msg != null) warnMsg.innerHTML  = w.msg;   // 允许 <br>
+    if (w.sub != null) warnSub.textContent = w.sub;
+  }
+
+  // ---- generic setters -----------------------------------------------
+  function setText(sel, val) {
+    const el = $('[data-hud="' + sel + '"]');
+    if (el && val != null) {
+      // 保留 <small> 后缀
+      const small = el.querySelector('small');
+      if (small) {
+        el.firstChild.nodeValue = String(val);
+      } else {
+        el.textContent = String(val);
+      }
+    }
+  }
+  function setVitals(v) {
+    if (!v) return;
+    if (v.o2    != null) setText('vitals.o2', v.o2);
+    if (v.press != null) setText('vitals.press', v.press);
+    if (v.co2   != null) setText('vitals.co2', v.co2);
+    if (v.text  != null) setText('vitals.text', v.text);   // external temp
+    if (v.tint  != null) setText('vitals.tint', v.tint);   // internal temp
+  }
+  function setBio(b) {
+    if (!b) return;
+    if (b.hr   != null) { $('[data-hud="bio.hr"]').textContent = b.hr;
+      // 心率联动心跳动画速度
+      const heart = $('[data-hud="bio.heart"]');
+      if (heart) heart.style.animationDuration = (60 / Math.max(30, b.hr)) + 's';
+    }
+    if (b.resp != null) $('[data-hud="bio.resp"]').textContent = b.resp;
+    if (b.spo2 != null) $('[data-hud="bio.spo2"]').textContent = b.spo2;
+    if (b.core != null) $('[data-hud="bio.core"]').textContent = b.core;
+  }
+  function setIntegrity(g) {
+    if (!g) return;
+    const apply = (key, val, warm) => {
+      const gauge = $('[data-hud="integrity.' + key + '"]');
+      if (!gauge || val == null) return;
+      gauge.querySelector('.v').textContent = val + '%';
+      const bar = gauge.querySelector('.bar');
+      bar.style.setProperty('--w', val + '%');
+      if (warm != null) bar.classList.toggle('warm', !!warm);
+    };
+    apply('hull',   g.hull,   g.hullWarm);
+    apply('cell',   g.cell,   g.cellWarm != null ? g.cellWarm : g.cell < 50);
+    apply('thrust', g.thrust, g.thrustWarm);
+  }
+  function setComms(list) {
+    if (!Array.isArray(list)) return;
+    const root = $('[data-hud="comms"]');
+    // 移除旧 .line
+    $$('.line', root).forEach(n => n.remove());
+    const cls = ['fresh', 'dim', 'faded'];
+    list.slice(0, 3).forEach((item, i) => {
+      const line = document.createElement('div');
+      line.className = 'line ' + cls[i];
+      line.innerHTML = `<span class="who">${item.who||''}</span><span class="msg">${item.msg||''}</span>`;
+      root.appendChild(line);
+    });
+  }
+  function setEnergy(n) {
+    n = Math.max(0, Math.min(5, n|0));
+    const cells = $$('[data-hud="energy"] .cell');
+    cells.forEach((c, i) => {
+      c.classList.toggle('full',  i < n);
+      c.classList.toggle('empty', i >= n);
+    });
+  }
+
+  // ---- breath fog (event-driven) -------------------------------------
+  const fogEl = $('[data-hud="fog"]');
+
+  // 一次 exhale：生成一个 puff，播完销毁
+  // opts: { intensity?: 0..1.5, duration?: seconds, size?: 'small'|'normal'|'big', demo?: bool }
+  function exhale(opts) {
+    if (!fogEl) return;
+    opts = opts || {};
+    const intensity = opts.intensity != null ? opts.intensity : 1.0;
+    const duration  = opts.duration  != null ? opts.duration  : (1.7 + Math.random() * 0.4);
+    const sizeMul   = opts.size === 'small' ? 0.78 : opts.size === 'big' ? 1.25 : 1.0;
+
+    const puff = document.createElement('div');
+    puff.className = 'puff' + (opts.demo ? ' demo' : '');
+
+    const w = (380 + Math.random() * 120) * sizeMul;
+    const xOff = (Math.random() - 0.5) * 60;
+    const dx   = (Math.random() - 0.5) * 18;
+    const rot0 = (Math.random() - 0.5) * 6;
+    const rot1 = (Math.random() - 0.5) * 5;
+    const rot2 = (Math.random() - 0.5) * 5;
+    const s0   = 0.90 + Math.random() * 0.08;
+    const s1   = 1.24 + Math.random() * 0.16;
+    const s2   = 1.50 + Math.random() * 0.18;
+    const peak = (opts.demo ? 0.78 : 0.30) * intensity;
+
+    puff.style.setProperty('--x',  xOff + 'px');
+    puff.style.setProperty('--dx', dx   + 'px');
+    puff.style.setProperty('--r0', rot0 + 'deg');
+    puff.style.setProperty('--r1', rot1 + 'deg');
+    puff.style.setProperty('--r2', rot2 + 'deg');
+    puff.style.setProperty('--s0', s0);
+    puff.style.setProperty('--s1', s1);
+    puff.style.setProperty('--s2', s2);
+    puff.style.setProperty('--peak', peak.toFixed(3));
+    puff.style.width = w + 'px';
+    puff.style.marginLeft = (-w / 2) + 'px';
+    puff.style.animation = `breath-once ${duration}s cubic-bezier(0.22, 0, 0.35, 1) forwards`;
+
+    fogEl.appendChild(puff);
+    setTimeout(() => puff.remove(), duration * 1000 + 80);
+  }
+
+  // 疾跑：按节奏出气，每 ~1.0~1.3s 一次，强度更高
+  let sprintTimer = null;
+  let sprintTick = 0;
+  function setSprint(on) {
+    if (on) {
+      if (sprintTimer) return;
+      sprintTick = 0;
+      const beat = () => {
+        sprintTick += 1;
+        // 主呼气
+        exhale({ intensity: 1.25, duration: 1.6 + Math.random() * 0.3, size: 'normal' });
+        // 偶尔补一小口（跑动呼吸不均匀）
+        if (sprintTick % 3 === 1) {
+          setTimeout(() => exhale({ intensity: 0.55, duration: 1.2, size: 'small' }), 220);
+        }
+        const gap = 950 + Math.random() * 250;
+        sprintTimer = setTimeout(beat, gap);
+      };
+      beat();
+    } else {
+      if (sprintTimer) clearTimeout(sprintTimer);
+      sprintTimer = null;
+    }
+  }
+
+  // 兼容旧接口：fogDemo 播一次明显的哈气，便于预览
+  function fogDemo() { exhale({ demo: true, duration: 2.2 }); }
+
+  window.addEventListener('keydown', (e) => {
+    if (e.repeat) return;
+    if (e.code === 'Space') { e.preventDefault(); exhale({ demo: true, duration: 2.2 }); }
+    if (e.code === 'KeyS')  { setSprint(!sprintTimer); }       // S 切换疾跑预览
+  });
+  // 打开页面后演示一段疾跑节奏（6 秒），看完自动停
+  setTimeout(() => {
+    setSprint(true);
+    setTimeout(() => setSprint(false), 6000);
+  }, 800);
+
+  window.HUD = {
+    exhale,                    // HUD.exhale({intensity, duration, size})
+    setSprint,                 // HUD.setSprint(true/false) — 跑动时打开
+    fogDemo,                   // 播一次显眼的哈气，用来预览
+    setBearing: (deg) => { target = deg; },
+    nudgeBearing: (deltaDeg) => {
+      // 一次性角冲量（爆炸/碰撞），转成速度增量并夹住
+      const dv = Math.max(-VEL_CAP, Math.min(VEL_CAP, deltaDeg * 3.0));
+      velocity += dv;
+    },
+    setDrift: (mps) => {
+      const sign = mps >= 0 ? '+' : '';
+      driftVal.textContent = sign + mps.toFixed(1) + 'm/s';
+    },
+    setWarning, setVitals, setBio, setIntegrity, setComms, setEnergy,
+  };
+
+  // ---- DEMO: 让指南针动起来，方便预览 -------------------------------
+  // 真实游戏接入后请删掉这段
+  let demoT = 0;
+  setInterval(() => {
+    demoT += 1;
+    // 每 3 秒换一个目标朝向，触发过冲回摆
+    if (demoT % 3 === 0) {
+      HUD.setBearing(Math.floor(Math.random() * 360));
+    }
+    // 偶尔来一次冲击（碰撞）
+    if (Math.random() < 0.08) HUD.nudgeBearing((Math.random() - 0.5) * 60);
+  }, 1000);
+})();
+</script>
+
 </body>
 </html>

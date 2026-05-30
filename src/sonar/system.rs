@@ -21,6 +21,7 @@ pub struct Point {
 
 #[derive(Clone, Copy, Default)]
 pub struct FireVisualState {
+    #[allow(dead_code)]
     pub muzzle_flash: f32,
 }
 

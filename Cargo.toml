@@ -2,7 +2,8 @@
 name = "gamejam_sonar_spike"
 version = "0.1.0"
 edition = "2021"
+default-run = "gamejam_sonar_spike"
 
 [dependencies]
 macroquad = "0.4.15"
-gltf = "1.4"
+gltf = { version = "1.4", features = ["KHR_lights_punctual"] }
