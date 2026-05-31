@@ -304,21 +304,51 @@ impl Narrative {
                 self.schedule(0.4, "每死一次就少一点。", 2.8);
             }
 
-            // === 2：第三次复活 —— 认知开始崩
+            // === 2：第三次复活 —— "树"概念 + 系统说是认知谬误 + 开始反驳
             2 => {
-                self.schedule(0.6, "又回来了。第几次了我都记不清。", 3.0);
-                self.schedule(0.4, "我开始分不清，是谁在走路了。", 3.0);
-                self.schedule(0.4, "我的脚？还是他的脚？", 2.8);
+                self.schedule(0.6, "我看见……一棵树。", 3.0);
+                self.schedule(0.4, "等等。", 1.6);
+                self.schedule(0.4, "这里寸草不生。哪来的树？", 3.0);
+                self.schedule_popup(
+                    0.4,
+                    "系统提示：\n你看见的是认知谬误。\n这里没有树。",
+                    4.8,
+                );
+                self.schedule(0.4, "可我明明看见了。", 2.6);
+                self.schedule(0.4, "树叶在动。我数得清叶子的数量。", 3.2);
+                self.schedule(0.5, "太不对了。", 2.0);
+                self.schedule(0.4, "不是我记错了。", 2.4);
+                self.schedule(0.4, "是这地方——在删。", 3.0);
+                self.schedule(0.4, "是这个系统——在骗我。", 3.0);
             }
 
-            // === 1：第四次复活 —— 终曲
+            // === 1：第四次复活 —— 倒数 1→0 + 反叛抉择 → 真相世界
             1 => {
-                self.schedule(0.6, "有人在叫我的编号。", 2.5);
-                self.schedule(0.4, "不是 LOTUS-9。是另一个。", 2.8);
-                self.schedule(0.4, "我从没听过这个编号。", 3.0);
-                self.schedule(1.4, "你听见那一秒吗？", 3.0);
-                self.schedule(0.5, "那不是噪音。", 2.5);
-                self.schedule(0.7, "你早就触及过了。", 3.5);
+                self.schedule(0.6, "又一次。", 2.0);
+                self.schedule(0.4, "我数不清第几次了。", 2.6);
+                self.schedule(0.4, "系统让我相信这里没有树。", 3.0);
+                self.schedule(0.4, "可我明明看见过。", 2.4);
+                self.schedule(0.4, "不止一棵。", 2.0);
+                self.schedule(0.5, "不止这一回。", 2.4);
+                self.schedule(0.5, "太不对了。", 2.0);
+                self.schedule(0.4, "不是我有问题。", 2.4);
+                self.schedule(0.4, "是它有问题。", 2.4);
+                // 全屏卡片 —— 视野收窄、思绪盘旋
+                self.schedule_card(0.8, "这地方不该是这样。", 3.2);
+                self.schedule_card(0.4, "Sonar 不该让我看见的——\n我都看见了。", 4.0);
+                self.schedule_card(0.4, "我可以——\n继续走它给我的路。", 4.0);
+                self.schedule_card(0.4, "或者——\n反叛它。", 3.6);
+                self.schedule_card(0.4, "我选反叛。", 3.0);
+                self.schedule_logo(0.5, "0", 2.2);
+                // 持续提示：N 进入真相世界
+                self.schedule(0.4, "按 N，离开这个系统的视角。", HOLD_PERSISTENT);
+            }
+            // === 0：真相世界 phase 6（明亮、可呼吸）===
+            0 => {
+                self.schedule(1.0, "原来——一直都在这里。", 4.0);
+                self.schedule(0.5, "树。风。光。", 3.0);
+                self.schedule(0.6, "声音不会骗我。我的眼睛也不会。", 3.6);
+                self.schedule(0.5, "骗我的，是那台机器。", 3.6);
             }
             _ => {}
         }

@@ -203,13 +203,15 @@ pub enum Mode {
     Earth,
 }
 
-/// 五轮 → 四张 GLB 映射（详见 docs/L2-03）：
-/// 轮 1+2 共用 scene.glb，轮 3/4/5 各自 loop3/4/5.glb。
-const PHASE_WORLD_PATHS: [&str; 4] = [
+/// 五轮 + 真相一轮 → 五张 GLB 映射。
+/// 轮 1+2 共用 scene.glb；轮 3/4/5 各自 loop3/4/5.glb；
+/// 轮 6 = 真相世界（鲜艳明亮的 scene_12345.glb）。
+const PHASE_WORLD_PATHS: [&str; 5] = [
     "content/levels/earth_return_01/scene.glb",
     "content/levels/earth_return_01/scene_loop3.glb",
     "content/levels/earth_return_01/scene_loop4.glb",
     "content/levels/earth_return_01/scene_loop5.glb",
+    "content/levels/earth_return_01/scene_12345.glb",
 ];
 
 fn world_index_for_phase(phase: u32) -> usize {
@@ -218,8 +220,12 @@ fn world_index_for_phase(phase: u32) -> usize {
         3 => 1,
         4 => 2,
         5 => 3,
-        _ => 0,
+        _ => 4, // phase 6+ 真相世界
     }
+}
+
+fn is_truth_phase(phase: u32) -> bool {
+    phase >= 6
 }
 
 // ===== Phase 3 树泄漏事件参数（L3-03）=====
@@ -299,6 +305,8 @@ pub struct GameApp {
     dev_mode: bool,
     /// DEV 模式下 Earth 用的"真实"渲染（含贴图，从 Earth GLB 加载 R_ 网格）
     dev_earth_scene: Option<ship::Scene>,
+    /// 真相世界（phase 6）：scene_12345.glb 的明亮纹理渲染
+    earth_truth_scene: Option<ship::Scene>,
 
     time: f32, // 累计时间（动画用）
 }
@@ -380,6 +388,7 @@ impl GameApp {
             bt_dissociation_hint_shown: false,
             dev_mode: false,
             dev_earth_scene: ship::Scene::load(PHASE_WORLD_PATHS[0]),
+            earth_truth_scene: ship::Scene::load(PHASE_WORLD_PATHS[4]),
             time: 0.0,
         }
     }
@@ -734,7 +743,7 @@ impl GameApp {
         // 威胁音乐先停掉（新 phase 里如果再扫到 BT 再开）
         audio::loop_stop("music_threat");
         let from = self.phase;
-        let to = if from >= 5 { 1 } else { from + 1 };
+        let to = (from + 1).min(6); // 5→6 进真相世界（123456），6 封顶
         self.loop_transition.start(from, to);
         // 触发"电量耗尽"视觉感：警告布满期间逐张弹红警告（实际不动 energy）
         for (i, w) in self.loop_transition.warnings.clone().into_iter().enumerate() {
@@ -948,7 +957,7 @@ impl GameApp {
                     LtPhase::StretchOut if self.loop_transition.t >= LT_STRETCH_OUT_DUR => {
                         // FOV 已拉到 178°、屏幕全黑——这里切 phase（玩家看不到突变）
                         if !self.loop_transition.switched {
-                            let to = if self.phase >= 5 { 1 } else { self.phase + 1 };
+                            let to = (self.phase + 1).min(6); // 5→6 进真相，6 封顶
                             self.actually_switch_phase(to);
                             self.loop_transition.switched = true;
                         }
@@ -1094,7 +1103,18 @@ impl GameApp {
                             let max_fovy: f32 = 178.0_f32.to_radians();
                             cam.fovy = cam.fovy + (max_fovy - cam.fovy) * fov_t;
                         }
-                        self.renderer.render(&cam, &self.sonar, world);
+
+                        if is_truth_phase(self.phase) {
+                            // 真相世界：明亮天空 + ship 渲染贴图，不走声呐黑底
+                            draw_earth_truth_sky();
+                            set_camera(&cam);
+                            if let Some(scene) = self.earth_truth_scene.as_ref() {
+                                ship::render(scene);
+                            }
+                            set_default_camera();
+                        } else {
+                            self.renderer.render(&cam, &self.sonar, world);
+                        }
 
                         // BT 死亡蒸发粒子（仅濒死阶段红粒子飘升）+ 绿激光 beam
                         draw_bt_death_particles(&self.bt_system, &cam);
@@ -1541,6 +1561,34 @@ fn draw_big_number(n: u32, cx: f32, cy: f32, base_fs: u16, scale: f32, color: Co
             ..Default::default()
         },
     );
+}
+
+/// 真相世界明亮天空：蓝色渐变 + 太阳光斑 + 几朵高空云。
+fn draw_earth_truth_sky() {
+    let w = screen_width();
+    let h = screen_height();
+    clear_background(Color::new(0.62, 0.80, 0.99, 1.0));
+    // 上→地平线的渐变
+    let bands = 32;
+    for i in 0..bands {
+        let t0 = i as f32 / bands as f32;
+        let y = h * t0;
+        let band_h = h / bands as f32 + 1.0;
+        let top = vec3(0.30, 0.58, 0.95);
+        let horizon = vec3(0.85, 0.94, 1.00);
+        let c = top.lerp(horizon, t0.powf(1.4));
+        draw_rectangle(0.0, y, w, band_h, Color::new(c.x, c.y, c.z, 1.0));
+    }
+    // 太阳
+    let sun = vec2(w * 0.78, h * 0.22);
+    draw_circle(sun.x, sun.y, h * 0.085, Color::new(1.0, 0.95, 0.60, 0.30));
+    draw_circle(sun.x, sun.y, h * 0.040, Color::new(1.0, 0.97, 0.72, 0.92));
+    // 高空云
+    let cloud = Color::new(1.0, 1.0, 1.0, 0.50);
+    draw_ellipse(w * 0.18, h * 0.18, w * 0.060, h * 0.020, 0.0, cloud);
+    draw_ellipse(w * 0.24, h * 0.16, w * 0.080, h * 0.026, 0.0, cloud);
+    draw_ellipse(w * 0.62, h * 0.28, w * 0.075, h * 0.022, 0.0, cloud);
+    draw_ellipse(w * 0.68, h * 0.27, w * 0.055, h * 0.018, 0.0, cloud);
 }
 
 /// BT 死亡蒸发粒子：CPU 投影后 draw_circle 红点；按 life 比例淡出。
