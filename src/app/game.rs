@@ -763,6 +763,7 @@ impl GameApp {
     /// 实际执行 phase 切换（转场动画推进到 ShowOld 时由 run() 调用）。
     fn actually_switch_phase(&mut self, to_phase: u32) {
         self.sonar.advance_loop();
+        let entering_truth = is_truth_phase(to_phase);
         self.phase = to_phase;
         let new_idx = world_index_for_phase(self.phase);
         if new_idx != self.current_idx {
@@ -775,14 +776,20 @@ impl GameApp {
         } else {
             println!("[game] phase {} → 沿用当前地图", self.phase);
         }
-        let (spawn, yaw) = compute_spawn(
-            Mode::Earth,
-            &self.ship_world,
-            self.ship_scene.as_ref(),
-            &self.worlds[self.current_idx],
-        );
-        self.player.respawn(spawn);
-        self.player.set_yaw(yaw);
+        // 进真相世界：**保留玩家死亡时的位置**（PA 要求"在原地，不是出生点"），
+        // 只换世界几何。其它 phase 仍走 compute_spawn 重生。
+        if !entering_truth {
+            let (spawn, yaw) = compute_spawn(
+                Mode::Earth,
+                &self.ship_world,
+                self.ship_scene.as_ref(),
+                &self.worlds[self.current_idx],
+            );
+            self.player.respawn(spawn);
+            self.player.set_yaw(yaw);
+        } else {
+            println!("[game] 进入真相 phase 6 · 保留玩家原地位置");
+        }
         self.leak_tree_state = LeakTreeState::Idle;
         // 字幕：清掉残留 → 排新 phase 的内心独白
         self.narrative.clear_all();
@@ -1105,8 +1112,8 @@ impl GameApp {
                         }
 
                         if is_truth_phase(self.phase) {
-                            // 真相世界：明亮天空 + ship 渲染贴图，不走声呐黑底
-                            draw_earth_truth_sky();
+                            // 真相世界：纯走 GLB 的真实渲染，不再画我自己的蓝天
+                            clear_background(Color::new(0.78, 0.88, 0.96, 1.0));
                             set_camera(&cam);
                             if let Some(scene) = self.earth_truth_scene.as_ref() {
                                 ship::render(scene);
@@ -1221,11 +1228,18 @@ impl GameApp {
                 hud_boot_t: self.transition.hud_boot_t(),
             };
             self.ui.update(&ctx, dt);
-            self.ui.draw(&ctx);
-            // 临时调试 HUD（坐标 + yaw）：左上小字，方便 PA 排查 spawn / marker 位置
-            draw_coord_hud(&self.player);
+            // 真相世界（phase 6）藏所有 HUD —— PA 要求"全部摘掉"
+            if !is_truth_phase(self.phase) {
+                self.ui.draw(&ctx);
+            }
+            // 临时调试 HUD（坐标 + yaw）：左上小字，方便 PA 排查 spawn / marker 位置；
+            // 真相阶段全屏摘掉。
+            if !is_truth_phase(self.phase) {
+                draw_coord_hud(&self.player);
+            }
             // 低电量红色视野闪烁（< 30% Earth 模式）+ 周期警告
             if self.mode == Mode::Earth
+                && !is_truth_phase(self.phase)
                 && energy_ratio < 0.30
                 && !matches!(self.transition.phase, TPhase::BlackHold)
                 && !self.loop_transition.active()
@@ -1561,34 +1575,6 @@ fn draw_big_number(n: u32, cx: f32, cy: f32, base_fs: u16, scale: f32, color: Co
             ..Default::default()
         },
     );
-}
-
-/// 真相世界明亮天空：蓝色渐变 + 太阳光斑 + 几朵高空云。
-fn draw_earth_truth_sky() {
-    let w = screen_width();
-    let h = screen_height();
-    clear_background(Color::new(0.62, 0.80, 0.99, 1.0));
-    // 上→地平线的渐变
-    let bands = 32;
-    for i in 0..bands {
-        let t0 = i as f32 / bands as f32;
-        let y = h * t0;
-        let band_h = h / bands as f32 + 1.0;
-        let top = vec3(0.30, 0.58, 0.95);
-        let horizon = vec3(0.85, 0.94, 1.00);
-        let c = top.lerp(horizon, t0.powf(1.4));
-        draw_rectangle(0.0, y, w, band_h, Color::new(c.x, c.y, c.z, 1.0));
-    }
-    // 太阳
-    let sun = vec2(w * 0.78, h * 0.22);
-    draw_circle(sun.x, sun.y, h * 0.085, Color::new(1.0, 0.95, 0.60, 0.30));
-    draw_circle(sun.x, sun.y, h * 0.040, Color::new(1.0, 0.97, 0.72, 0.92));
-    // 高空云
-    let cloud = Color::new(1.0, 1.0, 1.0, 0.50);
-    draw_ellipse(w * 0.18, h * 0.18, w * 0.060, h * 0.020, 0.0, cloud);
-    draw_ellipse(w * 0.24, h * 0.16, w * 0.080, h * 0.026, 0.0, cloud);
-    draw_ellipse(w * 0.62, h * 0.28, w * 0.075, h * 0.022, 0.0, cloud);
-    draw_ellipse(w * 0.68, h * 0.27, w * 0.055, h * 0.018, 0.0, cloud);
 }
 
 /// BT 死亡蒸发粒子：CPU 投影后 draw_circle 红点；按 life 比例淡出。

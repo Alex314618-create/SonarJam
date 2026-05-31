@@ -322,33 +322,27 @@ impl Narrative {
                 self.schedule(0.4, "是这个系统——在骗我。", 3.0);
             }
 
-            // === 1：第四次复活 —— 倒数 1→0 + 反叛抉择 → 真相世界
+            // === 1：第四次复活 —— 倒数到 0
+            // 不再写"反叛""抉择" —— 改成一个累到极限的人，慢慢把手抬起来按掉那个一直在骗他的东西。
             1 => {
-                self.schedule(0.6, "又一次。", 2.0);
-                self.schedule(0.4, "我数不清第几次了。", 2.6);
-                self.schedule(0.4, "系统让我相信这里没有树。", 3.0);
-                self.schedule(0.4, "可我明明看见过。", 2.4);
-                self.schedule(0.4, "不止一棵。", 2.0);
-                self.schedule(0.5, "不止这一回。", 2.4);
-                self.schedule(0.5, "太不对了。", 2.0);
-                self.schedule(0.4, "不是我有问题。", 2.4);
-                self.schedule(0.4, "是它有问题。", 2.4);
-                // 全屏卡片 —— 视野收窄、思绪盘旋
-                self.schedule_card(0.8, "这地方不该是这样。", 3.2);
-                self.schedule_card(0.4, "Sonar 不该让我看见的——\n我都看见了。", 4.0);
-                self.schedule_card(0.4, "我可以——\n继续走它给我的路。", 4.0);
-                self.schedule_card(0.4, "或者——\n反叛它。", 3.6);
-                self.schedule_card(0.4, "我选反叛。", 3.0);
-                self.schedule_logo(0.5, "0", 2.2);
-                // 持续提示：N 进入真相世界
-                self.schedule(0.4, "按 N，离开这个系统的视角。", HOLD_PERSISTENT);
+                self.schedule(0.6, "又是这里。", 2.2);
+                self.schedule(0.4, "又是那棵它说没有的树。", 3.0);
+                self.schedule(0.5, "可我看见它了。", 2.4);
+                self.schedule(0.4, "上一次也看见了。上上次也看见了。", 3.0);
+                self.schedule(0.5, "我数过的。", 2.0);
+                self.schedule(0.5, "我没疯。", 2.0);
+                // 满屏卡片：思绪盘旋（短句、间隔拉大）
+                self.schedule_card(1.0, "树是真的。", 2.6);
+                self.schedule_card(0.4, "风是真的。", 2.4);
+                self.schedule_card(0.4, "脚下的地——也是真的。", 3.0);
+                self.schedule_card(0.5, "在骗我的，是它。", 3.0);
+                self.schedule_logo(0.6, "0", 2.0);
+                self.schedule(0.4, "按 N · 关掉 Sonar。", HOLD_PERSISTENT);
             }
-            // === 0：真相世界 phase 6（明亮、可呼吸）===
+            // === 0：真相世界 phase 6（明亮、可呼吸）—— 字幕极简，让风景说话
             0 => {
-                self.schedule(1.0, "原来——一直都在这里。", 4.0);
-                self.schedule(0.5, "树。风。光。", 3.0);
-                self.schedule(0.6, "声音不会骗我。我的眼睛也不会。", 3.6);
-                self.schedule(0.5, "骗我的，是那台机器。", 3.6);
+                self.schedule(2.0, "……能呼吸了。", 4.0);
+                self.schedule(1.5, "原来一直在这里。", 4.0);
             }
             _ => {}
         }
