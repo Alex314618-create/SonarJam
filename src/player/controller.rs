@@ -37,7 +37,14 @@ impl Player {
 
     /// `speed_scale` 1.0 = 完整步速；Ship 模式传 < 1 降速。
     /// `radius` = 碰撞半径（Earth: PLAYER_RADIUS，Ship: SHIP_PLAYER_RADIUS）
-    pub fn update(&mut self, dt: f32, world: &World, capture_mouse: bool, speed_scale: f32, radius: f32) {
+    pub fn update(
+        &mut self,
+        dt: f32,
+        world: &World,
+        capture_mouse: bool,
+        speed_scale: f32,
+        radius: f32,
+    ) {
         // --- 视角（鼠标）---
         let mouse = Vec2::from(mouse_position());
         if capture_mouse {
@@ -148,18 +155,34 @@ impl Player {
 
         let sprinting = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
         let base_speed = WALK_SPEED * 3.0;
-        let speed = if sprinting { base_speed * 3.0 } else { base_speed };
+        let speed = if sprinting {
+            base_speed * 3.0
+        } else {
+            base_speed
+        };
 
         let forward = self.forward();
         let right = forward.cross(Vec3::Y).normalize_or_zero();
 
         let mut motion = Vec3::ZERO;
-        if is_key_down(KeyCode::W) { motion += forward; }
-        if is_key_down(KeyCode::S) { motion -= forward; }
-        if is_key_down(KeyCode::D) { motion += right; }
-        if is_key_down(KeyCode::A) { motion -= right; }
-        if is_key_down(KeyCode::Space) { motion += Vec3::Y; }
-        if is_key_down(KeyCode::LeftControl) { motion -= Vec3::Y; }
+        if is_key_down(KeyCode::W) {
+            motion += forward;
+        }
+        if is_key_down(KeyCode::S) {
+            motion -= forward;
+        }
+        if is_key_down(KeyCode::D) {
+            motion += right;
+        }
+        if is_key_down(KeyCode::A) {
+            motion -= right;
+        }
+        if is_key_down(KeyCode::Space) {
+            motion += Vec3::Y;
+        }
+        if is_key_down(KeyCode::LeftControl) {
+            motion -= Vec3::Y;
+        }
 
         if motion.length_squared() > 1e-6 {
             self.pos += motion.normalize() * speed * dt;

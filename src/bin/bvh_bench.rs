@@ -23,10 +23,7 @@ impl Bounded<f32, 3> for BvhTri {
     fn aabb(&self) -> Aabb<f32, 3> {
         let mn = self.v[0].min(self.v[1]).min(self.v[2]);
         let mx = self.v[0].max(self.v[1]).max(self.v[2]);
-        Aabb::with_bounds(
-            Point3::new(mn.x, mn.y, mn.z),
-            Point3::new(mx.x, mx.y, mx.z),
-        )
+        Aabb::with_bounds(Point3::new(mn.x, mn.y, mn.z), Point3::new(mx.x, mx.y, mx.z))
     }
 }
 
@@ -152,7 +149,10 @@ fn main() {
         // 构建 BVH
         let mut shapes: Vec<BvhTri> = scene
             .iter()
-            .map(|t| BvhTri { v: *t, node_index: 0 })
+            .map(|t| BvhTri {
+                v: *t,
+                node_index: 0,
+            })
             .collect();
         let t_build = Instant::now();
         let bvh = Bvh::build(&mut shapes);

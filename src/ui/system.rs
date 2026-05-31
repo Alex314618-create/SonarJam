@@ -39,7 +39,10 @@ pub fn gun_screen_rect(viewport: Vec2) -> (f32, f32, f32, f32) {
     let w = scale.len(GUN_DESIGN_W);
     let h = w * aspect;
     // 把枪图右下角对齐到屏幕右下角 + 偏移
-    let off = scale.px(DESIGN_W + GUN_ANCHOR_OFFSET_X, DESIGN_H + GUN_ANCHOR_OFFSET_Y);
+    let off = scale.px(
+        DESIGN_W + GUN_ANCHOR_OFFSET_X,
+        DESIGN_H + GUN_ANCHOR_OFFSET_Y,
+    );
     let x = off.x - w;
     let y = off.y - h;
     (x, y, w, h)
@@ -96,13 +99,46 @@ fn fonts() -> &'static Fonts {
     use std::sync::OnceLock;
     static F: OnceLock<Fonts> = OnceLock::new();
     F.get_or_init(|| {
-        let regular = load_ttf_font_from_bytes(DM_MONO_REGULAR)
-            .expect("DM Mono Regular 加载失败");
-        let medium = load_ttf_font_from_bytes(DM_MONO_MEDIUM)
-            .expect("DM Mono Medium 加载失败");
-        // 保持默认 Linear filter，配合 SSAA（draw_t 用 atlas size = 2× display）→ 清晰平滑。
+        let regular = load_ttf_font_from_bytes(DM_MONO_REGULAR).expect("DM Mono Regular 加载失败");
+        let medium = load_ttf_font_from_bytes(DM_MONO_MEDIUM).expect("DM Mono Medium 加载失败");
         Fonts { regular, medium }
     })
+}
+
+/// CJK 字体（系统 Noto Sans SC 优先；找不到就回 DM Mono 不渲染中文）。
+/// 用于左下 COMMS 等需要中文的 UI 元素。
+fn font_cjk() -> &'static Font {
+    use std::sync::OnceLock;
+    static F: OnceLock<Font> = OnceLock::new();
+    F.get_or_init(|| {
+        for path in [
+            "C:/Windows/Fonts/NotoSansSC-VF.ttf",
+            "C:/Windows/Fonts/simhei.ttf",
+        ] {
+            if let Ok(bytes) = std::fs::read(path) {
+                if let Ok(f) = load_ttf_font_from_bytes(&bytes) {
+                    return f;
+                }
+            }
+        }
+        load_ttf_font_from_bytes(DM_MONO_REGULAR).unwrap()
+    })
+}
+
+/// 中文字体版本 draw_t——给 COMMS 等中文 UI 用。
+fn draw_t_cjk(text: &str, x: f32, y: f32, fs: f32, color: Color) {
+    draw_text_ex(
+        text,
+        x.round(),
+        y.round(),
+        TextParams {
+            font: Some(font_cjk()),
+            font_size: fs.round() as u16,
+            font_scale: 1.0,
+            color,
+            ..Default::default()
+        },
+    );
 }
 
 /// 用 DM Mono Regular 在指定位置画文本。
@@ -142,7 +178,9 @@ fn draw_t_bold(text: &str, x: f32, y: f32, fs: f32, color: Color) {
 }
 
 /// 用 Regular 字体测量文本宽度（与 draw_t 配套，对应 SSAA 渲染参数）。
-struct TextDims { width: f32 }
+struct TextDims {
+    width: f32,
+}
 
 fn meas(text: &str, fs: f32) -> f32 {
     let dims = measure_text(text, Some(&fonts().regular), fs.round() as u16, 1.0);
@@ -186,11 +224,11 @@ fn ink_warm_sub() -> Color {
 
 #[allow(dead_code)]
 pub struct Vitals {
-    pub t_ext_c: i32,    // 外部温度
-    pub t_int_c: f32,    // 内部温度
-    pub o2_pct: u32,     // 氧气
-    pub press_psi: f32,  // 舱压
-    pub co2_pct: f32,    // 二氧化碳
+    pub t_ext_c: i32,   // 外部温度
+    pub t_int_c: f32,   // 内部温度
+    pub o2_pct: u32,    // 氧气
+    pub press_psi: f32, // 舱压
+    pub co2_pct: f32,   // 二氧化碳
 }
 impl Default for Vitals {
     fn default() -> Self {
@@ -287,9 +325,13 @@ pub trait UiElement {
     fn draw(&self, ctx: &UiContext<'_>, scale: &Scale);
     /// 该元素在 HUD boot 序列中的醒来时间（0..1，相对 BOOT_DUR）。
     /// 默认 1.0 = 立刻显示，无 CRT 启动。覆盖此方法可让元素分段亮起。
-    fn wake_time(&self) -> f32 { 1.0 }
+    fn wake_time(&self) -> f32 {
+        1.0
+    }
     /// 元素屏幕 bbox（用于 boot 期间盖 CRT 启动遮罩）。None = 无遮罩。
-    fn bbox(&self, _ctx: &UiContext<'_>, _scale: &Scale) -> Option<Rect> { None }
+    fn bbox(&self, _ctx: &UiContext<'_>, _scale: &Scale) -> Option<Rect> {
+        None
+    }
 }
 
 pub struct Ui {
@@ -312,7 +354,11 @@ impl Ui {
             Box::new(CommsLogEl),
             Box::new(IntegrityCellEl),
         ];
-        Self { elements, fog: BreathFog::new(), last_sprinting: false }
+        Self {
+            elements,
+            fog: BreathFog::new(),
+            last_sprinting: false,
+        }
     }
 
     pub fn update(&mut self, ctx: &UiContext<'_>, dt: f32) {
@@ -346,8 +392,13 @@ impl Ui {
             // 0 → 1 → 0 单峰，峰值 0.4
             let bell = 1.0 - (2.0 * k - 1.0).abs();
             let a = bell * 0.42;
-            draw_rectangle(0.0, 0.0, ctx.viewport.x, ctx.viewport.y,
-                Color::new(0.62, 0.95, 1.0, a));
+            draw_rectangle(
+                0.0,
+                0.0,
+                ctx.viewport.x,
+                ctx.viewport.y,
+                Color::new(0.62, 0.95, 1.0, a),
+            );
         }
         // 雾气最后画：盖在所有 HUD 之上（最贴近镜头/玻璃罩）
         self.fog.draw(ctx.viewport);
@@ -360,7 +411,9 @@ impl Ui {
 ///   wake+REVEAL..1：无遮罩
 fn draw_boot_curtain(bbox: Rect, wake: f32, hud_t: f32) {
     const REVEAL: f32 = 0.09; // 单元素揭示时长（hud_t 比例，更快）
-    if hud_t >= wake + REVEAL { return; }
+    if hud_t >= wake + REVEAL {
+        return;
+    }
     if hud_t < wake {
         // 全黑覆盖
         draw_rectangle(bbox.x, bbox.y, bbox.w, bbox.h, BLACK);
@@ -392,7 +445,9 @@ fn draw_boot_curtain(bbox: Rect, wake: f32, hud_t: f32) {
 struct SonarGunEl;
 impl UiElement for SonarGunEl {
     fn draw(&self, ctx: &UiContext<'_>, _scale: &Scale) {
-        if ctx.in_ship { return; }
+        if ctx.in_ship {
+            return;
+        }
         let (x, y, w, h) = gun_screen_rect(ctx.viewport);
         let tex = sonar_gun_tex();
         draw_texture_ex(
@@ -406,7 +461,9 @@ impl UiElement for SonarGunEl {
             },
         );
     }
-    fn wake_time(&self) -> f32 { 0.55 }
+    fn wake_time(&self) -> f32 {
+        0.55
+    }
     fn bbox(&self, ctx: &UiContext<'_>, _scale: &Scale) -> Option<Rect> {
         let (x, y, w, h) = gun_screen_rect(ctx.viewport);
         Some(Rect { x, y, w, h })
@@ -428,7 +485,9 @@ struct Puff {
     width_design: f32,
     x_off_design: f32, // 中心横向偏移（屏幕中线为基准）
     dx_design: f32,    // 向上飘时再额外横移
-    s0: f32, s1: f32, s2: f32,
+    s0: f32,
+    s1: f32,
+    s2: f32,
     /// 选用哪张烘焙好的雾贴图（0..N_FOG_TEX-1）
     tex_idx: usize,
     /// 是否水平翻转（再增一倍变化）
@@ -457,9 +516,16 @@ impl BreathFog {
     fn new() -> Self {
         let mut rng = 0xFEEDFACEu32;
         let textures = (0..N_FOG_TEX)
-            .map(|i| bake_fog_texture(0xA5C1D000 ^ (i as u32 * 0x9E3779B1) ^ {
-                rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; rng
-            }))
+            .map(|i| {
+                bake_fog_texture(
+                    0xA5C1D000 ^ (i as u32 * 0x9E3779B1) ^ {
+                        rng ^= rng << 13;
+                        rng ^= rng >> 17;
+                        rng ^= rng << 5;
+                        rng
+                    },
+                )
+            })
             .collect();
         Self {
             puffs: Vec::with_capacity(8),
@@ -506,7 +572,9 @@ impl BreathFog {
     }
 
     fn spawn_puff(&mut self, w: f32, x_off_extra: f32, intensity: f32, duration_mul: f32) {
-        if self.puffs.len() >= 12 { return; }
+        if self.puffs.len() >= 12 {
+            return;
+        }
         let x_off = (self.rand_f32() - 0.5) * 60.0 + x_off_extra;
         let dx = (self.rand_f32() - 0.5) * 18.0;
         let s0 = 0.90 + self.rand_f32() * 0.08;
@@ -523,7 +591,9 @@ impl BreathFog {
             width_design: w,
             x_off_design: x_off,
             dx_design: dx,
-            s0, s1, s2,
+            s0,
+            s1,
+            s2,
             tex_idx,
             flip_x,
         });
@@ -591,7 +661,9 @@ impl BreathFog {
             // 对应贴图本身 ellipse 宽:高（rx/ry = 0.55/0.50 → ≈ 0.48）；改这个会扯椭圆变形
             let h_px = w_px * 0.48;
             let alpha = p.peak * alpha_factor;
-            if alpha <= 0.002 { continue; }
+            if alpha <= 0.002 {
+                continue;
+            }
             let tex = &self.textures[p.tex_idx];
             // 贴图本身已携带 CSS 颜色与 stop 形状；tint 只控制全局透明度（puff peak × keyframe）。
             let tint = Color::new(1.0, 1.0, 1.0, alpha);
@@ -626,8 +698,12 @@ fn bake_fog_texture(seed: u32) -> Texture2D {
     };
     let mut nx = [0.0f32; GW * GH];
     let mut ny = [0.0f32; GW * GH];
-    for v in nx.iter_mut() { *v = next() * 2.0 - 1.0; }
-    for v in ny.iter_mut() { *v = next() * 2.0 - 1.0; }
+    for v in nx.iter_mut() {
+        *v = next() * 2.0 - 1.0;
+    }
+    for v in ny.iter_mut() {
+        *v = next() * 2.0 - 1.0;
+    }
     let sample = |grid: &[f32], u: f32, v: f32| -> f32 {
         let gx = u * (GW as f32 - 1.0);
         let gy = v * (GH as f32 - 1.0);
@@ -657,14 +733,11 @@ fn bake_fog_texture(seed: u32) -> Texture2D {
     let ry = 0.50 * h_f;
     let warp_amp = 0.16;
 
-    let stops: [(f32, f32); 4] = [
-        (0.00, 0.36),
-        (0.26, 0.20),
-        (0.52, 0.07),
-        (0.78, 0.00),
-    ];
+    let stops: [(f32, f32); 4] = [(0.00, 0.36), (0.26, 0.20), (0.52, 0.07), (0.78, 0.00)];
     let lerp_stops = |d: f32| -> f32 {
-        if d >= 0.78 { return 0.0; }
+        if d >= 0.78 {
+            return 0.0;
+        }
         for w in stops.windows(2) {
             let (d0, a0) = w[0];
             let (d1, a1) = w[1];
@@ -747,7 +820,6 @@ fn puff_keyframe(t: f32, s0: f32, s1: f32, s2: f32) -> (f32, f32, f32) {
     (ty, sc, a)
 }
 
-
 // ============ 元素：HelmetOverlay（头盔曲率/暗角，全屏）============
 
 #[allow(dead_code)] // 暂时未注册；保留备用
@@ -762,12 +834,36 @@ impl UiElement for HelmetOverlay {
             let t = i as f32 / bands as f32;
             let alpha_side = 0.28 * (1.0 - t).powf(1.8);
             let band_w = w * 0.18 / bands as f32;
-            draw_rectangle(i as f32 * band_w, 0.0, band_w, h, Color::new(0.0, 0.0, 0.0, alpha_side));
-            draw_rectangle(w - (i as f32 + 1.0) * band_w, 0.0, band_w, h, Color::new(0.0, 0.0, 0.0, alpha_side));
+            draw_rectangle(
+                i as f32 * band_w,
+                0.0,
+                band_w,
+                h,
+                Color::new(0.0, 0.0, 0.0, alpha_side),
+            );
+            draw_rectangle(
+                w - (i as f32 + 1.0) * band_w,
+                0.0,
+                band_w,
+                h,
+                Color::new(0.0, 0.0, 0.0, alpha_side),
+            );
             // 顶部/底部更轻
             let band_h = h * 0.15 / bands as f32;
-            draw_rectangle(0.0, i as f32 * band_h, w, band_h, Color::new(0.0, 0.0, 0.0, 0.22 * (1.0 - t).powf(1.6)));
-            draw_rectangle(0.0, h - (i as f32 + 1.0) * band_h, w, band_h, Color::new(0.0, 0.0, 0.0, 0.30 * (1.0 - t).powf(1.6)));
+            draw_rectangle(
+                0.0,
+                i as f32 * band_h,
+                w,
+                band_h,
+                Color::new(0.0, 0.0, 0.0, 0.22 * (1.0 - t).powf(1.6)),
+            );
+            draw_rectangle(
+                0.0,
+                h - (i as f32 + 1.0) * band_h,
+                w,
+                band_h,
+                Color::new(0.0, 0.0, 0.0, 0.30 * (1.0 - t).powf(1.6)),
+            );
         }
     }
 }
@@ -776,11 +872,15 @@ impl UiElement for HelmetOverlay {
 
 struct CrosshairEnergy;
 impl CrosshairEnergy {
-    fn design_bbox() -> (f32, f32, f32, f32) { (DESIGN_W * 0.5 - 38.0, DESIGN_H * 0.5 - 38.0, 76.0, 76.0) }
+    fn design_bbox() -> (f32, f32, f32, f32) {
+        (DESIGN_W * 0.5 - 38.0, DESIGN_H * 0.5 - 38.0, 76.0, 76.0)
+    }
 }
 impl UiElement for CrosshairEnergy {
     fn draw(&self, ctx: &UiContext<'_>, scale: &Scale) {
-        if ctx.in_ship { return; }
+        if ctx.in_ship {
+            return;
+        }
         // 中心在 design (960, 540)
         let c = scale.px(DESIGN_W * 0.5, DESIGN_H * 0.5);
 
@@ -802,27 +902,40 @@ impl UiElement for CrosshairEnergy {
         let r = scale.len(26.0);
         let dot_r = scale.len(3.5);
         let positions = [
-            (0.0, -r),                 // top
-            (-r * 0.95, -r * 0.31),    // 左上
-            (-r * 0.59, r * 0.81),     // 左下
-            (r * 0.59, r * 0.81),      // 右下
-            (r * 0.95, -r * 0.31),     // 右上
+            (0.0, -r),              // top
+            (-r * 0.95, -r * 0.31), // 左上
+            (-r * 0.59, r * 0.81),  // 左下
+            (r * 0.59, r * 0.81),   // 右下
+            (r * 0.95, -r * 0.31),  // 右上
         ];
         let empty_count = 5u32.saturating_sub(ctx.energy_segments);
         for (i, (dx, dy)) in positions.iter().enumerate() {
             let p = vec2(c.x + dx, c.y + dy);
             if (i as u32) < empty_count {
-                draw_circle_lines(p.x, p.y, dot_r, scale.len(1.0).max(1.0), Color::new(0.41, 0.44, 0.48, 0.58));
+                draw_circle_lines(
+                    p.x,
+                    p.y,
+                    dot_r,
+                    scale.len(1.0).max(1.0),
+                    Color::new(0.41, 0.44, 0.48, 0.58),
+                );
             } else {
                 draw_circle(p.x, p.y, dot_r, energy_fill());
             }
         }
     }
-    fn wake_time(&self) -> f32 { 0.05 }
+    fn wake_time(&self) -> f32 {
+        0.05
+    }
     fn bbox(&self, _ctx: &UiContext<'_>, scale: &Scale) -> Option<Rect> {
         let (x, y, w, h) = Self::design_bbox();
         let tl = scale.px(x, y);
-        Some(Rect { x: tl.x, y: tl.y, w: scale.len(w), h: scale.len(h) })
+        Some(Rect {
+            x: tl.x,
+            y: tl.y,
+            w: scale.len(w),
+            h: scale.len(h),
+        })
     }
 }
 
@@ -853,10 +966,20 @@ impl UiElement for CompassTape {
             if (tick_x - center.x).abs() > half_w {
                 continue;
             }
-            let tick_h = if is_major { scale.len(10.0) } else { scale.len(5.0) };
+            let tick_h = if is_major {
+                scale.len(10.0)
+            } else {
+                scale.len(5.0)
+            };
             let tick_col = if is_major { ink_mid() } else { ink_dim() };
             let bottom_y = center.y + scale.len(rail_h * 0.5);
-            draw_rectangle(tick_x - scale.len(0.5), bottom_y - tick_h, scale.len(1.0).max(1.0), tick_h, tick_col);
+            draw_rectangle(
+                tick_x - scale.len(0.5),
+                bottom_y - tick_h,
+                scale.len(1.0).max(1.0),
+                tick_h,
+                tick_col,
+            );
             // 标签
             if is_label {
                 let label = match mod_360 {
@@ -869,27 +992,56 @@ impl UiElement for CompassTape {
                 let cardinal = matches!(mod_360, 0 | 90 | 180 | 270);
                 let font_size = scale.font(if cardinal { 11.0 } else { 9.0 });
                 let col = if cardinal { ink_strong() } else { ink_mid() };
-                let dims = TextDims{ width: meas(&label, font_size) };
-                draw_t(&label, tick_x - dims.width * 0.5, bottom_y - tick_h - scale.len(2.0), font_size, col);
+                let dims = TextDims {
+                    width: meas(&label, font_size),
+                };
+                draw_t(
+                    &label,
+                    tick_x - dims.width * 0.5,
+                    bottom_y - tick_h - scale.len(2.0),
+                    font_size,
+                    col,
+                );
             }
         }
 
         // 中心指针（垂直亮线）
         let pointer_h = scale.len(14.0);
         let pointer_y = center.y + scale.len(rail_h * 0.5 + 4.0) - pointer_h;
-        draw_rectangle(center.x - scale.len(0.5), pointer_y, scale.len(1.0).max(1.0), pointer_h, ink_strong());
+        draw_rectangle(
+            center.x - scale.len(0.5),
+            pointer_y,
+            scale.len(1.0).max(1.0),
+            pointer_h,
+            ink_strong(),
+        );
 
         // BEARING 与 DRIFT 文本
         let mod_b = ((bearing as i32 % 360) + 360) % 360;
         let bearing_text = format!("BEARING  {:03}°    DRIFT  {:+.1}m/s", mod_b, ctx.drift_mps);
         let fs = scale.font(11.0);
-        let dims = TextDims{ width: meas(&bearing_text, fs) };
-        draw_t(&bearing_text, center.x - dims.width * 0.5, center.y + scale.len(rail_h * 0.5 + 22.0), fs, ink_strong());
+        let dims = TextDims {
+            width: meas(&bearing_text, fs),
+        };
+        draw_t(
+            &bearing_text,
+            center.x - dims.width * 0.5,
+            center.y + scale.len(rail_h * 0.5 + 22.0),
+            fs,
+            ink_strong(),
+        );
     }
-    fn wake_time(&self) -> f32 { 0.20 }
+    fn wake_time(&self) -> f32 {
+        0.20
+    }
     fn bbox(&self, _ctx: &UiContext<'_>, scale: &Scale) -> Option<Rect> {
         let tl = scale.px(DESIGN_W * 0.5 - 300.0, 44.0);
-        Some(Rect { x: tl.x, y: tl.y, w: scale.len(600.0), h: scale.len(60.0) })
+        Some(Rect {
+            x: tl.x,
+            y: tl.y,
+            w: scale.len(600.0),
+            h: scale.len(60.0),
+        })
     }
 }
 
@@ -919,9 +1071,28 @@ impl UiElement for WarningCardEl {
             draw_line(x, y0, x - card_h, y1, scale.len(1.0).max(1.0), bg);
         }
         // 顶部 + 左侧边框
-        let border = Color::new(warn_line().r, warn_line().g, warn_line().b, warn_line().a * pulse);
-        draw_line(tl.x, tl.y, tl.x + card_w, tl.y, scale.len(1.0).max(1.0), border);
-        draw_line(tl.x, tl.y, tl.x, tl.y + card_h, scale.len(1.0).max(1.0), border);
+        let border = Color::new(
+            warn_line().r,
+            warn_line().g,
+            warn_line().b,
+            warn_line().a * pulse,
+        );
+        draw_line(
+            tl.x,
+            tl.y,
+            tl.x + card_w,
+            tl.y,
+            scale.len(1.0).max(1.0),
+            border,
+        );
+        draw_line(
+            tl.x,
+            tl.y,
+            tl.x,
+            tl.y + card_h,
+            scale.len(1.0).max(1.0),
+            border,
+        );
 
         // TAG
         let mut y = tl.y + scale.len(14.0);
@@ -936,12 +1107,25 @@ impl UiElement for WarningCardEl {
         }
         // SUB
         let sub_fs = scale.font(9.0);
-        draw_t(&w.sub, tl.x + scale.len(14.0), y + scale.len(2.0), sub_fs, ink_warm_sub());
+        draw_t(
+            &w.sub,
+            tl.x + scale.len(14.0),
+            y + scale.len(2.0),
+            sub_fs,
+            ink_warm_sub(),
+        );
     }
-    fn wake_time(&self) -> f32 { 0.70 }
+    fn wake_time(&self) -> f32 {
+        0.70
+    }
     fn bbox(&self, _ctx: &UiContext<'_>, scale: &Scale) -> Option<Rect> {
         let tl = scale.px(100.0, 82.0);
-        Some(Rect { x: tl.x, y: tl.y, w: scale.len(340.0), h: scale.len(108.0) })
+        Some(Rect {
+            x: tl.x,
+            y: tl.y,
+            w: scale.len(340.0),
+            h: scale.len(108.0),
+        })
     }
 }
 
@@ -961,34 +1145,76 @@ impl UiElement for SuitVitalsEl {
         // 标题
         let head_p = scale.px(x, y);
         // 头部短横线
-        draw_rectangle(head_p.x, head_p.y + scale.len(4.0), scale.len(18.0), scale.len(1.0).max(1.0), ink_dim());
-        draw_t("SUIT . LIFE", head_p.x + scale.len(28.0), head_p.y + scale.len(8.0), head_fs, ink_dim());
+        draw_rectangle(
+            head_p.x,
+            head_p.y + scale.len(4.0),
+            scale.len(18.0),
+            scale.len(1.0).max(1.0),
+            ink_dim(),
+        );
+        draw_t(
+            "SUIT . LIFE",
+            head_p.x + scale.len(28.0),
+            head_p.y + scale.len(8.0),
+            head_fs,
+            ink_dim(),
+        );
         y += 24.0;
 
         // 各行
         let rows: [(&str, String, Color); 5] = [
             ("T.EXT", format!("{}°C", ctx.vitals.t_ext_c), ink_warm()),
-            ("T.INT", format!("{:.1}°C", ctx.vitals.t_int_c), ink_strong()),
+            (
+                "T.INT",
+                format!("{:.1}°C", ctx.vitals.t_int_c),
+                ink_strong(),
+            ),
             ("O2", format!("{}%", ctx.vitals.o2_pct), ink_strong()),
-            ("PRESS", format!("{:.1}psi", ctx.vitals.press_psi), ink_strong()),
+            (
+                "PRESS",
+                format!("{:.1}psi", ctx.vitals.press_psi),
+                ink_strong(),
+            ),
             ("CO2", format!("{:.2}%", ctx.vitals.co2_pct), ink_warm()),
         ];
         for (label, val, val_col) in rows.iter() {
             let p = scale.px(x, y);
             // 底线
             let line_y = p.y + scale.len(16.0);
-            draw_line(p.x, line_y, p.x + scale.len(320.0), line_y, scale.len(1.0).max(1.0), line_soft());
+            draw_line(
+                p.x,
+                line_y,
+                p.x + scale.len(320.0),
+                line_y,
+                scale.len(1.0).max(1.0),
+                line_soft(),
+            );
             draw_t(label, p.x, p.y + scale.len(12.0), label_fs, ink_dim());
             // 值靠右
-            let val_dims = TextDims{ width: meas(val, val_fs) };
-            draw_t(val, p.x + scale.len(320.0) - val_dims.width, p.y + scale.len(12.0), val_fs, *val_col);
+            let val_dims = TextDims {
+                width: meas(val, val_fs),
+            };
+            draw_t(
+                val,
+                p.x + scale.len(320.0) - val_dims.width,
+                p.y + scale.len(12.0),
+                val_fs,
+                *val_col,
+            );
             y += 20.0;
         }
     }
-    fn wake_time(&self) -> f32 { 0.30 }
+    fn wake_time(&self) -> f32 {
+        0.30
+    }
     fn bbox(&self, _ctx: &UiContext<'_>, scale: &Scale) -> Option<Rect> {
         let tl = scale.px(100.0, 272.0);
-        Some(Rect { x: tl.x, y: tl.y, w: scale.len(340.0), h: scale.len(140.0) })
+        Some(Rect {
+            x: tl.x,
+            y: tl.y,
+            w: scale.len(340.0),
+            h: scale.len(140.0),
+        })
     }
 }
 
@@ -1007,9 +1233,17 @@ impl UiElement for BioSignsEl {
 
         // 标题（右对齐）
         let head_text = "BIO . CREW-01";
-        let head_dims = TextDims{ width: meas(head_text, head_fs) };
+        let head_dims = TextDims {
+            width: meas(head_text, head_fs),
+        };
         let head_p = scale.px(x_right, y);
-        draw_t(head_text, head_p.x - head_dims.width - scale.len(28.0), head_p.y + scale.len(8.0), head_fs, ink_dim());
+        draw_t(
+            head_text,
+            head_p.x - head_dims.width - scale.len(28.0),
+            head_p.y + scale.len(8.0),
+            head_fs,
+            ink_dim(),
+        );
         // 短横线（在标题右边）
         draw_rectangle(
             head_p.x - scale.len(18.0),
@@ -1046,26 +1280,47 @@ impl UiElement for BioSignsEl {
         for (label, val, has_heart) in rows.iter() {
             let p = scale.px(x_right - panel_w, y);
             let line_y = p.y + scale.len(16.0);
-            draw_line(p.x, line_y, p.x + scale.len(panel_w), line_y, scale.len(1.0).max(1.0), line_soft());
+            draw_line(
+                p.x,
+                line_y,
+                p.x + scale.len(panel_w),
+                line_y,
+                scale.len(1.0).max(1.0),
+                line_soft(),
+            );
             draw_t(label, p.x, p.y + scale.len(12.0), label_fs, ink_dim());
 
             // 值（值靠右）
-            let val_dims = TextDims{ width: meas(val, val_fs) };
+            let val_dims = TextDims {
+                width: meas(val, val_fs),
+            };
             let val_x = p.x + scale.len(panel_w) - val_dims.width;
             draw_t(val, val_x, p.y + scale.len(12.0), val_fs, ink_strong());
             // 心跳小圆（在值左边）
             if *has_heart {
                 let mut hc = bio_pulse();
                 hc.a *= heart_pulse;
-                draw_circle(val_x - scale.len(14.0), p.y + scale.len(7.5), scale.len(3.0 + heart_pulse * 2.0), hc);
+                draw_circle(
+                    val_x - scale.len(14.0),
+                    p.y + scale.len(7.5),
+                    scale.len(3.0 + heart_pulse * 2.0),
+                    hc,
+                );
             }
             y += 18.0;
         }
     }
-    fn wake_time(&self) -> f32 { 0.40 }
+    fn wake_time(&self) -> f32 {
+        0.40
+    }
     fn bbox(&self, _ctx: &UiContext<'_>, scale: &Scale) -> Option<Rect> {
         let tl = scale.px(DESIGN_W - 108.0 - 290.0, 88.0);
-        Some(Rect { x: tl.x, y: tl.y, w: scale.len(298.0), h: scale.len(110.0) })
+        Some(Rect {
+            x: tl.x,
+            y: tl.y,
+            w: scale.len(298.0),
+            h: scale.len(110.0),
+        })
     }
 }
 
@@ -1088,8 +1343,19 @@ impl UiElement for CommsLogEl {
         let pulse = 0.55 + 0.45 * ((ctx.time * (std::f32::consts::TAU / 1.8)).sin() * 0.5 + 0.5);
         let mut dot = Color::new(0.67, 0.86, 0.91, 0.55);
         dot.a *= pulse;
-        draw_circle(head_p.x + scale.len(3.0), head_p.y + scale.len(6.0), scale.len(2.5), dot);
-        draw_t("COMMS . CH-04", head_p.x + scale.len(16.0), head_p.y + scale.len(9.0), head_fs, ink_dim());
+        draw_circle(
+            head_p.x + scale.len(3.0),
+            head_p.y + scale.len(6.0),
+            scale.len(2.5),
+            dot,
+        );
+        draw_t(
+            "COMMS . CH-04",
+            head_p.x + scale.len(16.0),
+            head_p.y + scale.len(9.0),
+            head_fs,
+            ink_dim(),
+        );
 
         // 最多 4 条（第 4 条用于挤出旧条目时做淡出过渡，由 GameApp 在适当时清理）。
         let visible: usize = ctx.comms.len().min(4);
@@ -1118,16 +1384,29 @@ impl UiElement for CommsLogEl {
                 c.a *= final_alpha;
                 c
             };
-            draw_t(&line.who, p.x, p.y + scale.len(10.0), who_fs, who_col);
-            draw_t(&line.msg, p.x + scale.len(100.0), p.y + scale.len(10.0), msg_fs, msg_col);
+            draw_t_cjk(&line.who, p.x, p.y + scale.len(10.0), who_fs, who_col);
+            draw_t_cjk(
+                &line.msg,
+                p.x + scale.len(100.0),
+                p.y + scale.len(10.0),
+                msg_fs,
+                msg_col,
+            );
             y += line_h;
         }
     }
-    fn wake_time(&self) -> f32 { 0.85 }
+    fn wake_time(&self) -> f32 {
+        0.85
+    }
     fn bbox(&self, _ctx: &UiContext<'_>, scale: &Scale) -> Option<Rect> {
         // 左下：design left=100, bottom=120, width=460, height=120
         let tl = scale.px(100.0, DESIGN_H - 240.0);
-        Some(Rect { x: tl.x, y: tl.y, w: scale.len(460.0), h: scale.len(124.0) })
+        Some(Rect {
+            x: tl.x,
+            y: tl.y,
+            w: scale.len(460.0),
+            h: scale.len(124.0),
+        })
     }
 }
 
@@ -1136,7 +1415,9 @@ impl UiElement for CommsLogEl {
 struct IntegrityCellEl;
 impl UiElement for IntegrityCellEl {
     fn draw(&self, ctx: &UiContext<'_>, scale: &Scale) {
-        if ctx.in_ship { return; }
+        if ctx.in_ship {
+            return;
+        }
         // design 右下：right=96, bottom=96, width=140
         let panel_w = 140.0;
         let x_right = DESIGN_W - 96.0;
@@ -1147,7 +1428,9 @@ impl UiElement for IntegrityCellEl {
         // 标签
         draw_t("CELL", p.x, p.y, label_fs, ink_dim());
         let pct_text = format!("{}%", ctx.integrity_cell_pct);
-        let pct_dims = TextDims{ width: meas(&pct_text, val_fs) };
+        let pct_dims = TextDims {
+            width: meas(&pct_text, val_fs),
+        };
         draw_t(
             &pct_text,
             p.x + scale.len(panel_w) - pct_dims.width,
@@ -1169,9 +1452,16 @@ impl UiElement for IntegrityCellEl {
         };
         draw_rectangle(p.x, bar_y, fill_w, bar_h, fill);
     }
-    fn wake_time(&self) -> f32 { 0.50 }
+    fn wake_time(&self) -> f32 {
+        0.50
+    }
     fn bbox(&self, _ctx: &UiContext<'_>, scale: &Scale) -> Option<Rect> {
         let tl = scale.px(DESIGN_W - 240.0, DESIGN_H - 130.0);
-        Some(Rect { x: tl.x, y: tl.y, w: scale.len(150.0), h: scale.len(32.0) })
+        Some(Rect {
+            x: tl.x,
+            y: tl.y,
+            w: scale.len(150.0),
+            h: scale.len(32.0),
+        })
     }
 }

@@ -56,7 +56,11 @@ impl Scene {
         }
 
         let (aabb_min, aabb_max) = compute_aabb(&batches);
-        Some(Self { batches, aabb_min, aabb_max })
+        Some(Self {
+            batches,
+            aabb_min,
+            aabb_max,
+        })
     }
 
     /// 当前场景的水平中心（XZ），y 取地板（AABB.min.y）。供 spawn 用。
@@ -158,13 +162,23 @@ fn process_primitive(
     let mut em_lit: Vec<[u8; 4]> = Vec::with_capacity(MAX_IDX_PER_BATCH);
 
     fn flush(
-        v: &mut Vec<Vertex>, i: &mut Vec<u16>,
-        cu: &mut Vec<[u8; 4]>, cl: &mut Vec<[u8; 4]>,
-        batches: &mut Vec<Batch>, tex: Option<Texture2D>, is_em: bool,
+        v: &mut Vec<Vertex>,
+        i: &mut Vec<u16>,
+        cu: &mut Vec<[u8; 4]>,
+        cl: &mut Vec<[u8; 4]>,
+        batches: &mut Vec<Batch>,
+        tex: Option<Texture2D>,
+        is_em: bool,
     ) {
-        if i.is_empty() { return; }
+        if i.is_empty() {
+            return;
+        }
         batches.push(Batch {
-            mesh: Mesh { vertices: std::mem::take(v), indices: std::mem::take(i), texture: tex },
+            mesh: Mesh {
+                vertices: std::mem::take(v),
+                indices: std::mem::take(i),
+                texture: tex,
+            },
             color_unlit: std::mem::take(cu),
             color_lit: std::mem::take(cl),
             is_emissive: is_em,
@@ -184,12 +198,26 @@ fn process_primitive(
 
     for tri in indices.chunks_exact(3) {
         if base_i.len() + 3 > MAX_IDX_PER_BATCH {
-            flush(&mut base_v, &mut base_i, &mut base_unlit, &mut base_lit,
-                  batches, base_texture.clone(), false);
+            flush(
+                &mut base_v,
+                &mut base_i,
+                &mut base_unlit,
+                &mut base_lit,
+                batches,
+                base_texture.clone(),
+                false,
+            );
         }
         if has_emissive && em_i.len() + 3 > MAX_IDX_PER_BATCH {
-            flush(&mut em_v, &mut em_i, &mut em_unlit, &mut em_lit,
-                  batches, em_texture.clone(), true);
+            flush(
+                &mut em_v,
+                &mut em_i,
+                &mut em_unlit,
+                &mut em_lit,
+                batches,
+                em_texture.clone(),
+                true,
+            );
         }
         let i0 = tri[0] as usize;
         let i1 = tri[1] as usize;
@@ -206,7 +234,9 @@ fn process_primitive(
                 nm.mul_vec3(ns[i2]).normalize_or_zero(),
             ],
             None => {
-                let fn_ = (p_world[1] - p_world[0]).cross(p_world[2] - p_world[0]).normalize_or_zero();
+                let fn_ = (p_world[1] - p_world[0])
+                    .cross(p_world[2] - p_world[0])
+                    .normalize_or_zero();
                 [fn_, fn_, fn_]
             }
         };
@@ -253,11 +283,25 @@ fn process_primitive(
             }
         }
     }
-    flush(&mut base_v, &mut base_i, &mut base_unlit, &mut base_lit,
-          batches, base_texture, false);
+    flush(
+        &mut base_v,
+        &mut base_i,
+        &mut base_unlit,
+        &mut base_lit,
+        batches,
+        base_texture,
+        false,
+    );
     if has_emissive {
-        flush(&mut em_v, &mut em_i, &mut em_unlit, &mut em_lit,
-              batches, em_texture, true);
+        flush(
+            &mut em_v,
+            &mut em_i,
+            &mut em_unlit,
+            &mut em_lit,
+            batches,
+            em_texture,
+            true,
+        );
     }
 }
 
@@ -265,7 +309,11 @@ fn lambert(n: Vec3, base_tint: Vec3) -> Vec3 {
     let l = LIGHT_DIR.normalize_or_zero();
     let ndl = n.dot(l).max(0.0);
     let lit = AMBIENT + LIGHT_COLOR * (DIFFUSE_GAIN * ndl);
-    vec3(lit.x * base_tint.x, lit.y * base_tint.y, lit.z * base_tint.z)
+    vec3(
+        lit.x * base_tint.x,
+        lit.y * base_tint.y,
+        lit.z * base_tint.z,
+    )
 }
 
 fn to_rgba8(img: &gltf::image::Data) -> Vec<u8> {
@@ -344,7 +392,9 @@ fn strip_extensions_required(bytes: &[u8]) -> Vec<u8> {
 }
 
 fn replace_array_value(s: &str, key: &str, new_value: &str) -> String {
-    let Some(key_pos) = s.find(key) else { return s.to_string() };
+    let Some(key_pos) = s.find(key) else {
+        return s.to_string();
+    };
     let bytes = s.as_bytes();
     let after_key = key_pos + key.len();
     let mut i = after_key;

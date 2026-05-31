@@ -33,11 +33,14 @@ const BREATH_TERROR: &[u8] = include_bytes!("../../assets/sfx/breath_terror.wav"
 const HORROR_STING_01: &[u8] = include_bytes!("../../assets/sfx/horror_sting_01.wav");
 const HORROR_STING_02: &[u8] = include_bytes!("../../assets/sfx/horror_sting_02.wav");
 const HORROR_PASS: &[u8] = include_bytes!("../../assets/sfx/horror_pass.wav");
-const AMBIENT_STING_RADIATION: &[u8] = include_bytes!("../../assets/sfx/ambient_sting_radiation.wav");
+const AMBIENT_STING_RADIATION: &[u8] =
+    include_bytes!("../../assets/sfx/ambient_sting_radiation.wav");
 const AMBIENT_STING_HORROR: &[u8] = include_bytes!("../../assets/sfx/ambient_sting_horror.wav");
 const HEARTBEAT: &[u8] = include_bytes!("../../assets/sfx/heartbeat.wav");
 const REBIRTH: &[u8] = include_bytes!("../../assets/sfx/rebirth.wav");
 const BACKGROUND_MUSIC: &[u8] = include_bytes!("../../assets/sfx/background_music.wav");
+const MUSIC_RELIEF: &[u8] = include_bytes!("../../assets/sfx/music_relief.wav");
+const MUSIC_THREAT: &[u8] = include_bytes!("../../assets/sfx/music_threat.wav");
 
 // ===== Ducking 参数 =====
 /// 一次 play() 后 music 维持低音量多久（秒）
@@ -106,6 +109,8 @@ pub fn init() {
         bytes.insert("heartbeat", HEARTBEAT);
         bytes.insert("rebirth", REBIRTH);
         bytes.insert("background_music", BACKGROUND_MUSIC);
+        bytes.insert("music_relief", MUSIC_RELIEF);
+        bytes.insert("music_threat", MUSIC_THREAT);
 
         *slot = Some(AudioState {
             handle,
@@ -157,9 +162,15 @@ pub fn loop_start(name: &'static str) {
         if audio.loops.contains_key(name) {
             return;
         }
-        let Some(&data) = audio.bytes.get(name) else { return };
-        let Ok(source) = Decoder::new(Cursor::new(data)) else { return };
-        let Ok(sink) = Sink::try_new(&audio.handle) else { return };
+        let Some(&data) = audio.bytes.get(name) else {
+            return;
+        };
+        let Ok(source) = Decoder::new(Cursor::new(data)) else {
+            return;
+        };
+        let Ok(sink) = Sink::try_new(&audio.handle) else {
+            return;
+        };
         sink.append(source.buffered().repeat_infinite());
         audio.loops.insert(name, sink);
         audio.duck_until = audio.elapsed + DUCK_HOLD;
@@ -182,9 +193,15 @@ pub fn music_start(name: &'static str) {
         if audio.music_sink.is_some() {
             return;
         }
-        let Some(&data) = audio.bytes.get(name) else { return };
-        let Ok(source) = Decoder::new(Cursor::new(data)) else { return };
-        let Ok(sink) = Sink::try_new(&audio.handle) else { return };
+        let Some(&data) = audio.bytes.get(name) else {
+            return;
+        };
+        let Ok(source) = Decoder::new(Cursor::new(data)) else {
+            return;
+        };
+        let Ok(sink) = Sink::try_new(&audio.handle) else {
+            return;
+        };
         sink.set_volume(1.0);
         sink.append(source.buffered().repeat_infinite());
         audio.music_sink = Some(sink);
@@ -212,8 +229,8 @@ pub fn set_stingers_active(active: bool) {
         audio.stingers_active = active;
         if active {
             let r = rand_f32(&mut audio.rng);
-            audio.next_stinger_in =
-                STINGER_INITIAL_DELAY_MIN + r * (STINGER_INITIAL_DELAY_MAX - STINGER_INITIAL_DELAY_MIN);
+            audio.next_stinger_in = STINGER_INITIAL_DELAY_MIN
+                + r * (STINGER_INITIAL_DELAY_MAX - STINGER_INITIAL_DELAY_MIN);
         }
     });
 }
@@ -245,8 +262,7 @@ pub fn update(dt: f32) {
                 play_inline(audio, name);
                 audio.duck_until = audio.elapsed + DUCK_HOLD;
                 let r = rand_f32(&mut audio.rng);
-                audio.next_stinger_in =
-                    STINGER_MIN_GAP + r * (STINGER_MAX_GAP - STINGER_MIN_GAP);
+                audio.next_stinger_in = STINGER_MIN_GAP + r * (STINGER_MAX_GAP - STINGER_MIN_GAP);
             }
         }
     });

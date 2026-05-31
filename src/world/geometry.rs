@@ -9,8 +9,7 @@
 //! Raycast 加速：在 C_ + P_ 上各建一棵 BVH（bvh crate 0.12），单 ray 从 O(N) → O(log N)。
 
 use crate::app::config::{
-    PLAYER_HEIGHT, ROOM_CEILING_Y, ROOM_FLOOR_Y, ROOM_MAX_X, ROOM_MAX_Z, ROOM_MIN_X,
-    ROOM_MIN_Z,
+    PLAYER_HEIGHT, ROOM_CEILING_Y, ROOM_FLOOR_Y, ROOM_MAX_X, ROOM_MAX_Z, ROOM_MIN_X, ROOM_MIN_Z,
 };
 use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::BHShape;
@@ -98,13 +97,18 @@ impl HitTag {
         let n = name.to_lowercase();
         // 红色（Danger）当前**未启用**——保留 token 供后续 gameplay 危险物用
         // （例如「虚假的大鲸鱼尸体」会被扫描标记成红色 = 当时再加 token）。
-        let danger_kw = [
-            "danger", "hazard", "threat", "trap", "blood",
-        ];
+        let danger_kw = ["danger", "hazard", "threat", "trap", "blood"];
         // 黄色（Structure）= 一切人造结构 + 尸骨——扫到时区别于地形/登陆仓的青色。
         let structure_kw = [
-            "human", "building", "structure", "ruin", "camp",
-            "settlement", "wreck", "debris", "corpse",
+            "human",
+            "building",
+            "structure",
+            "ruin",
+            "camp",
+            "settlement",
+            "wreck",
+            "debris",
+            "corpse",
         ];
         if danger_kw.iter().any(|k| n.contains(k)) {
             HitTag::Danger
@@ -170,10 +174,7 @@ impl Bounded<f32, 3> for BvhTri {
     fn aabb(&self) -> Aabb<f32, 3> {
         let mn = self.tri.a.min(self.tri.b).min(self.tri.c);
         let mx = self.tri.a.max(self.tri.b).max(self.tri.c);
-        Aabb::with_bounds(
-            Point3::new(mn.x, mn.y, mn.z),
-            Point3::new(mx.x, mx.y, mx.z),
-        )
+        Aabb::with_bounds(Point3::new(mn.x, mn.y, mn.z), Point3::new(mx.x, mx.y, mx.z))
     }
 }
 
@@ -223,6 +224,15 @@ pub struct World {
     physics_bvh: Option<Bvh<f32, 3>>,
     spawn: Vec3,
     spawn_yaw: f32,
+    /// 通用 M_* 标记点（按名查）。事件触发器读这里拿世界坐标。
+    markers: Vec<crate::content::Marker>,
+    /// R_leak_* 三角形按对象名分组（已在 render_tris 中；这里独立保留供事件采样）。
+    leak_meshes: Vec<crate::content::NamedMesh>,
+    /// H_* 隐藏遮蔽物按对象名分组（初始隐形）。activate_hidden_mesh 后才生效。
+    hidden_meshes: Vec<crate::content::NamedMesh>,
+    /// 运行时已激活的 H_ 三角形：参与深度预通道（chain 进 render_triangles）。
+    /// raycast 通过同一三角形 push 进 raycast_shapes 并重建 BVH 生效。
+    activated_tris: Vec<Tri>,
 }
 
 impl World {
@@ -256,7 +266,11 @@ impl World {
                 "[world] C_ 为空，raycast 与碰撞均回退到 R_（{} 三角）—— 建议补 C_ 简化代理避免玩家被装饰几何卡住",
                 level.render_tris.len()
             );
-            level.render_tris.iter().map(|t| (HitTag::Normal, *t)).collect()
+            level
+                .render_tris
+                .iter()
+                .map(|t| (HitTag::Normal, *t))
+                .collect()
         } else {
             level.collision_tris.clone()
         };
@@ -278,15 +292,26 @@ impl World {
         let bvh_tag_ok = raycast_bvh.is_some();
 
         // 统计 tag 分布（modeler 检查工具）
-        let n_danger = raycast_src_tagged.iter().filter(|(t, _)| *t == HitTag::Danger).count();
-        let n_struct = raycast_src_tagged.iter().filter(|(t, _)| *t == HitTag::Structure).count();
+        let n_danger = raycast_src_tagged
+            .iter()
+            .filter(|(t, _)| *t == HitTag::Danger)
+            .count();
+        let n_struct = raycast_src_tagged
+            .iter()
+            .filter(|(t, _)| *t == HitTag::Structure)
+            .count();
         println!(
             "[world] BVH: {} 节点形状 ({} C_/R_, 其中 {} Danger / {} Structure + {} P_) → {}",
             raycast_shapes.len(),
             raycast_src_tagged.len(),
-            n_danger, n_struct,
+            n_danger,
+            n_struct,
             level.phantom_tris.len(),
-            if bvh_tag_ok { "已加速" } else { "空场景跳过" }
+            if bvh_tag_ok {
+                "已加速"
+            } else {
+                "空场景跳过"
+            }
         );
 
         // R_ 物理 BVH：地面查询专用（玩家"脚踏真山"）
@@ -299,11 +324,26 @@ impl World {
         println!(
             "[world] 物理 BVH: {} R_ 节点形状 → {}",
             physics_shapes.len(),
-            if physics_bvh.is_some() { "已加速" } else { "空场景跳过" }
+            if physics_bvh.is_some() {
+                "已加速"
+            } else {
+                "空场景跳过"
+            }
         );
 
         let spawn = level.spawn.unwrap_or_else(|| vec3(0.0, PLAYER_HEIGHT, 0.0));
         let spawn_yaw = level.spawn_yaw.unwrap_or(0.0);
+        if !level.leak_meshes.is_empty()
+            || !level.hidden_meshes.is_empty()
+            || level.markers.len() > 1
+        {
+            println!(
+                "[world] 事件资源: {} R_leak_*, {} H_*, {} M_*",
+                level.leak_meshes.len(),
+                level.hidden_meshes.len(),
+                level.markers.len()
+            );
+        }
         Self {
             render_tris,
             collision_tris,
@@ -314,6 +354,10 @@ impl World {
             physics_bvh,
             spawn,
             spawn_yaw,
+            markers: level.markers,
+            leak_meshes: level.leak_meshes,
+            hidden_meshes: level.hidden_meshes,
+            activated_tris: Vec::new(),
         }
     }
 
@@ -323,23 +367,73 @@ impl World {
         let (z0, z1) = (ROOM_MIN_Z, ROOM_MAX_Z);
         let (y0, y1) = (ROOM_FLOOR_Y, ROOM_CEILING_Y);
 
-        push_quad(&mut tris, v(x0, y0, z0), v(x1, y0, z0), v(x1, y0, z1), v(x0, y0, z1), Surface::Floor);
-        push_quad(&mut tris, v(x0, y1, z0), v(x0, y1, z1), v(x1, y1, z1), v(x1, y1, z0), Surface::Ceiling);
-        push_quad(&mut tris, v(x0, y0, z0), v(x0, y0, z1), v(x0, y1, z1), v(x0, y1, z0), Surface::Wall);
-        push_quad(&mut tris, v(x1, y0, z1), v(x1, y0, z0), v(x1, y1, z0), v(x1, y1, z1), Surface::Wall);
-        push_quad(&mut tris, v(x1, y0, z0), v(x0, y0, z0), v(x0, y1, z0), v(x1, y1, z0), Surface::Wall);
-        push_quad(&mut tris, v(x0, y0, z1), v(x1, y0, z1), v(x1, y1, z1), v(x0, y1, z1), Surface::Wall);
+        push_quad(
+            &mut tris,
+            v(x0, y0, z0),
+            v(x1, y0, z0),
+            v(x1, y0, z1),
+            v(x0, y0, z1),
+            Surface::Floor,
+        );
+        push_quad(
+            &mut tris,
+            v(x0, y1, z0),
+            v(x0, y1, z1),
+            v(x1, y1, z1),
+            v(x1, y1, z0),
+            Surface::Ceiling,
+        );
+        push_quad(
+            &mut tris,
+            v(x0, y0, z0),
+            v(x0, y0, z1),
+            v(x0, y1, z1),
+            v(x0, y1, z0),
+            Surface::Wall,
+        );
+        push_quad(
+            &mut tris,
+            v(x1, y0, z1),
+            v(x1, y0, z0),
+            v(x1, y1, z0),
+            v(x1, y1, z1),
+            Surface::Wall,
+        );
+        push_quad(
+            &mut tris,
+            v(x1, y0, z0),
+            v(x0, y0, z0),
+            v(x0, y1, z0),
+            v(x1, y1, z0),
+            Surface::Wall,
+        );
+        push_quad(
+            &mut tris,
+            v(x0, y0, z1),
+            v(x1, y0, z1),
+            v(x1, y1, z1),
+            v(x0, y1, z1),
+            Surface::Wall,
+        );
 
         let mut raycast_shapes: Vec<BvhTri> = tris
             .iter()
-            .map(|t| BvhTri { tri: *t, tag: HitTag::Normal, node_index: 0 })
+            .map(|t| BvhTri {
+                tri: *t,
+                tag: HitTag::Normal,
+                node_index: 0,
+            })
             .collect();
         let raycast_bvh = build_bvh(&mut raycast_shapes);
 
         // code_room 下 R_ = collision tris；物理 BVH 也用它
         let mut physics_shapes: Vec<BvhTri> = tris
             .iter()
-            .map(|t| BvhTri { tri: *t, tag: HitTag::Normal, node_index: 0 })
+            .map(|t| BvhTri {
+                tri: *t,
+                tag: HitTag::Normal,
+                node_index: 0,
+            })
             .collect();
         let physics_bvh = build_bvh(&mut physics_shapes);
 
@@ -353,7 +447,56 @@ impl World {
             physics_bvh,
             spawn: v(0.0, PLAYER_HEIGHT, 0.0),
             spawn_yaw: 0.0,
+            markers: Vec::new(),
+            leak_meshes: Vec::new(),
+            hidden_meshes: Vec::new(),
+            activated_tris: Vec::new(),
         }
+    }
+
+    /// 健壮的地面查询：先打 R_ 真山 BVH；失败再扫 C_/激活 H_（碰撞 tris）；
+    /// 再失败：在 (x, z) 周围螺旋采样最多 16 个点。
+    /// 用于 spawn / respawn 时哪怕 M_spawn 摆在地形外或孔洞里也能落地。
+    pub fn ground_y_at_robust(&self, x: f32, z: f32) -> Option<f32> {
+        if let Some(y) = self.ground_y_at(x, z) {
+            return Some(y);
+        }
+        // 用 collision_tris 兜底（C_ + 激活的 H_）
+        if let Some(y) = self.ground_y_at_collision(x, z) {
+            return Some(y);
+        }
+        // 螺旋搜索（半径 0.5m → 8m）
+        for r_idx in 1..=6 {
+            let r = r_idx as f32 * 1.3;
+            for k in 0..8 {
+                let theta = k as f32 * std::f32::consts::TAU / 8.0;
+                let sx = x + theta.cos() * r;
+                let sz = z + theta.sin() * r;
+                if let Some(y) = self.ground_y_at(sx, sz) {
+                    return Some(y);
+                }
+                if let Some(y) = self.ground_y_at_collision(sx, sz) {
+                    return Some(y);
+                }
+            }
+        }
+        None
+    }
+
+    /// 用 collision_tris（C_ + 激活 H_）做下打 ground 查询。
+    fn ground_y_at_collision(&self, x: f32, z: f32) -> Option<f32> {
+        let origin = vec3(x, 10_000.0, z);
+        let dir = vec3(0.0, -1.0, 0.0);
+        let mut best: Option<f32> = None;
+        for t in &self.collision_tris {
+            if let Some(d) = ray_tri(origin, dir, t.a, t.b, t.c) {
+                let y = origin.y - d;
+                if best.map_or(true, |b| y > b) {
+                    best = Some(y);
+                }
+            }
+        }
+        best
     }
 
     /// 物理地面查询：从 (x, z) 顶上往下打一道射线，返回最近 R_ 表面的 y。
@@ -391,14 +534,57 @@ impl World {
         self.spawn
     }
 
-    /// 用于深度预通道：R_（真实几何）+ C_（系统所见简化代理）都写深度，
-    /// 才能正确遮挡点云（C_ 墙也要挡住后方点云，否则玩家会"穿墙看见"）。
-    /// 几何是静态的，渲染器一次性缓存即可。
+    /// 用于深度预通道：R_（真实几何）+ C_（系统所见简化代理）+ 已激活 H_（系统遮蔽物）
+    /// 都写深度，才能正确遮挡点云。激活 H_ 后调用 `renderer.reload_world()` 触发重传。
     pub fn render_triangles(&self) -> impl Iterator<Item = [Vec3; 3]> + '_ {
         self.render_tris
             .iter()
             .chain(self.collision_tris.iter())
+            .chain(self.activated_tris.iter())
             .map(|t| [t.a, t.b, t.c])
+    }
+
+    /// 按对象名查 M_* 标记点的世界坐标。
+    pub fn marker_position(&self, name: &str) -> Option<Vec3> {
+        self.markers
+            .iter()
+            .find(|m| m.name == name)
+            .map(|m| m.position)
+    }
+
+    /// 按对象名查 R_leak_* 三角形（事件采样源）。
+    pub fn leak_mesh_triangles(&self, name: &str) -> Option<&[[Vec3; 3]]> {
+        self.leak_meshes
+            .iter()
+            .find(|m| m.name == name)
+            .map(|m| m.tris.as_slice())
+    }
+
+    /// 激活一个 H_* 隐藏遮蔽物：三角形同时进入 raycast BVH、深度预通道和玩家碰撞。
+    /// 返回 true 表示找到并激活；false 表示无此命名（或已激活）。
+    /// 调用方需要在调用后再调 `renderer.reload_world()` 重传 depth buffer。
+    pub fn activate_hidden_mesh(&mut self, name: &str) -> bool {
+        let Some(pos) = self.hidden_meshes.iter().position(|m| m.name == name) else {
+            return false;
+        };
+        let mesh = self.hidden_meshes.swap_remove(pos);
+        let tag = HitTag::from_name(&mesh.name);
+        for t in &mesh.tris {
+            let n = (t[1] - t[0]).cross(t[2] - t[0]).normalize_or_zero();
+            self.activated_tris
+                .push(Tri::with_surface(t[0], t[1], t[2], surface_from_normal(n)));
+            self.raycast_shapes.push(bvh_tri_tagged(tag, t));
+            self.collision_tris
+                .push(Tri::with_surface(t[0], t[1], t[2], surface_from_normal(n)));
+        }
+        self.raycast_bvh = build_bvh(&mut self.raycast_shapes);
+        println!(
+            "[world] activate_hidden_mesh({}) → +{} tris, 总 raycast 形状 {}",
+            name,
+            mesh.tris.len(),
+            self.raycast_shapes.len()
+        );
+        true
     }
 
     /// 声呐 raycast：BVH 加速、单 ray O(log N)。

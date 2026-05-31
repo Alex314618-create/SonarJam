@@ -25,7 +25,13 @@ fn main() {
 
     for scene in doc.scenes() {
         for node in scene.nodes() {
-            walk(&node, &buffers, &mut total_tris, &mut by_prefix, &mut nameless);
+            walk(
+                &node,
+                &buffers,
+                &mut total_tris,
+                &mut by_prefix,
+                &mut nameless,
+            );
         }
     }
 
@@ -92,10 +98,7 @@ fn walk(
         let mut obj_tris = 0;
         for prim in mesh.primitives() {
             let reader = prim.reader(|b| buffers.get(b.index()).map(|d| d.0.as_slice()));
-            let vert_count = reader
-                .read_positions()
-                .map(|i| i.count())
-                .unwrap_or(0);
+            let vert_count = reader.read_positions().map(|i| i.count()).unwrap_or(0);
             let idx_count = reader
                 .read_indices()
                 .map(|i| i.into_u32().count())

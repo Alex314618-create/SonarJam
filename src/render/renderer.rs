@@ -16,16 +16,14 @@
 //! - miniquad `apply_pipeline` 用 `depth_write` 字段同时开关深度测试+写入
 //!   （深度写掩码始终为 GL 默认 TRUE）；故两个管线都设 `depth_write: true`。
 
-use crate::app::config::{
-    CLEAR_COLOR, MAX_BEAM_LINES, POINT_DEPTH_BIAS, POINT_PIXEL_SIZE,
-};
+use crate::app::config::{CLEAR_COLOR, MAX_BEAM_LINES, POINT_DEPTH_BIAS, POINT_PIXEL_SIZE};
 use crate::sonar::system::{Point, Sonar};
 use crate::world::geometry::World;
 use macroquad::camera::Camera;
 use macroquad::miniquad::{
     Bindings, BufferId, BufferSource, BufferType, BufferUsage, Comparison, Pipeline,
-    PipelineParams, PrimitiveType, ShaderMeta, ShaderSource, UniformBlockLayout,
-    UniformDesc, UniformType, UniformsSource, VertexAttribute, VertexFormat,
+    PipelineParams, PrimitiveType, ShaderMeta, ShaderSource, UniformBlockLayout, UniformDesc,
+    UniformType, UniformsSource, VertexAttribute, VertexFormat,
 };
 use macroquad::prelude::*;
 use macroquad::window::get_internal_gl;
@@ -180,7 +178,14 @@ impl Renderer {
             for p in beams.iter().step_by(step).take(MAX_BEAM_LINES) {
                 if let Some(sp) = project(mvp, p.pos) {
                     let c = p.color;
-                    draw_line(muzzle.x, muzzle.y, sp.x, sp.y, 1.0, Color::new(c.r, c.g, c.b, 0.4));
+                    draw_line(
+                        muzzle.x,
+                        muzzle.y,
+                        sp.x,
+                        sp.y,
+                        1.0,
+                        Color::new(c.r, c.g, c.b, 0.4),
+                    );
                 }
             }
         }

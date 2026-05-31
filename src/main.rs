@@ -1,6 +1,8 @@
 mod app;
 mod audio;
+mod bt;
 mod content;
+mod narrative;
 mod player;
 mod render;
 mod ship;
@@ -17,8 +19,7 @@ fn window_conf() -> macroquad::prelude::Conf {
 #[macroquad::main(window_conf)]
 async fn main() {
     audio::init();
-    // 背景音乐永久 loop，ducking 由 audio::update 自动管理
-    audio::music_start("background_music");
+    // 背景音乐已关 —— 开幕需要安静的星空
     let mut app = GameApp::new().await;
     app.run().await;
 }

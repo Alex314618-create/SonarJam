@@ -43,13 +43,18 @@ pub const ROOM_CEILING_Y: f32 = 3.0;
 
 // --- 声呐 ---
 pub const SONAR_RANGE: f32 = 40.0;
-pub const SONAR_MAX_POINTS: usize = 400_000; // 持久点云环形缓冲容量（含 crashed 静态云 + 多轮残留）
+pub const SONAR_MAX_POINTS: usize = 1_120_000; // 翻倍（PA 要求） // 持久点云环形缓冲容量（含 crashed 静态云 + 多轮残留）
 /// 出生点登陆仓预探明区静态采样点数（占 SONAR_MAX_POINTS 约 37%，留出 60% 给玩家发射）
 pub const CRASHED_CLOUD_POINTS: usize = 150_000;
 pub const PULSE_RAYS: usize = 864;
 // 圆形发射范围缩小 30%（32.64 → 22.85）
 pub const PULSE_SPREAD_DEG: f32 = 22.85;
 pub const PULSE_COST: f32 = 6.0;
+// --- 右键绿激光（解离 BT 用）---
+pub const GREEN_COST_PER_SEC: f32 = 1.2;
+pub const GREEN_RAYS_PER_SEC: f32 = 3000.0;
+pub const GREEN_SPREAD_DEG: f32 = 6.0;
+pub const GREEN_RANGE: f32 = 50.0;
 // 发射速度提升 40%（cooldown ÷ 1.4：0.12 → 0.086）
 pub const PULSE_COOLDOWN: f32 = 0.086;
 // 连续扫描发射率提升 40%（2016 → 2822）
@@ -82,6 +87,12 @@ pub const SHIP_EYE_HEIGHT: f32 = 0.9;
 pub const SHIP_FLOOR_Y_OFFSET: f32 = 0.0;
 /// Ship 模式玩家碰撞半径（窄过道用；Earth 仍用 PLAYER_RADIUS=0.3）
 pub const SHIP_PLAYER_RADIUS: f32 = 0.08;
+
+// ===== 出生点强制覆盖（开发期 PA 拨数字，正式发布前可清回 None）=====
+// 写 Some((x, y, z, yaw_deg)) → 完全无视 GLB 里的 M_spawn，强制用这组坐标和朝向。
+// 写 None → 走 GLB M_spawn / floor_center 兜底。
+pub const SHIP_SPAWN_OVERRIDE: Option<(f32, f32, f32, f32)> = Some((0.56, 0.98, 1.32, 259.3));
+pub const EARTH_SPAWN_OVERRIDE: Option<(f32, f32, f32, f32)> = Some((82.26, 6.25, 69.6, 63.1));
 
 /// 枪图设计宽度（设计像素，1920×1080 基准）
 pub const GUN_DESIGN_W: f32 = 280.0;
