@@ -33,6 +33,9 @@ enum CueStyle {
     Logo,
     /// 屏幕**中央**弹窗：半透深红/深蓝矩形 + 醒目标题 + 内容。系统提示用。
     Popup,
+    /// 不渲染——触发时把 (who, msg) 直接吐到 pending_emit_comms，由 GameApp 推到 COMMS。
+    /// 用法：schedule_comm(delay, who, msg)；text 里 who 和 msg 用 \x1F 分隔。
+    Comm,
 }
 
 #[derive(Clone)]
@@ -51,6 +54,8 @@ pub struct Narrative {
     current: Option<(Cue, f32)>,
     /// 能量阈值触发记录（70/50/30/15/0），每次 phase 重入清零。
     energy_fired: [bool; 5],
+    /// 由 CueStyle::Comm 在 tick 中吐出的 (who, msg) —— GameApp 每帧 drain。
+    pending_emit_comms: Vec<(String, String)>,
 }
 
 impl Narrative {
@@ -59,7 +64,32 @@ impl Narrative {
             pending: VecDeque::new(),
             current: None,
             energy_fired: [false; 5],
+            pending_emit_comms: Vec::new(),
         }
+    }
+
+    /// 入队一条延迟发送到左下 COMMS 的系统消息（不在屏幕中央弹窗，不抢戏）。
+    pub fn schedule_comm(
+        &mut self,
+        delay: f32,
+        who: impl Into<String>,
+        msg: impl Into<String>,
+    ) {
+        let combined = format!("{}\x1F{}", who.into(), msg.into());
+        self.pending.push_back((
+            delay,
+            Cue {
+                text: combined,
+                hold: 0.0,
+                speaker: None,
+                style: CueStyle::Comm,
+            },
+        ));
+    }
+
+    /// GameApp 每帧消费：拿走所有等待发送的 (who, msg) → push_comm。
+    pub fn drain_pending_comms(&mut self) -> Vec<(String, String)> {
+        std::mem::take(&mut self.pending_emit_comms)
     }
 
     /// 入队一条无说话人的旁白字幕（底部小字）。
@@ -304,17 +334,16 @@ impl Narrative {
                 self.schedule(0.4, "每死一次就少一点。", 2.8);
             }
 
-            // === 2：第三次复活 —— "树"概念 + 系统说是认知谬误 + 开始反驳
+            // === 2：第三次复活 —— "树"概念 + 系统驳斥 + 开始反驳
+            // 系统话不再弹窗，改成左下 COMMS 滑入，不抢戏
             2 => {
                 self.schedule(0.6, "我看见……一棵树。", 3.0);
                 self.schedule(0.4, "等等。", 1.6);
                 self.schedule(0.4, "这里寸草不生。哪来的树？", 3.0);
-                self.schedule_popup(
-                    0.4,
-                    "系统提示：\n你看见的是认知谬误。\n这里没有树。",
-                    4.8,
-                );
-                self.schedule(0.4, "可我明明看见了。", 2.6);
+                // 系统在 COMMS 里冷冷接一句
+                self.schedule_comm(0.4, "系统", "视觉模式异常 · 你看见的是认知谬误");
+                self.schedule_comm(0.1, "系统", "这里没有树 · 请遵循 Sonar 指引");
+                self.schedule(0.6, "可我明明看见了。", 2.6);
                 self.schedule(0.4, "树叶在动。我数得清叶子的数量。", 3.2);
                 self.schedule(0.5, "太不对了。", 2.0);
                 self.schedule(0.4, "不是我记错了。", 2.4);
@@ -394,13 +423,24 @@ impl Narrative {
             self.current = None;
         }
         // 2) 只有当 current 空时才从 pending 取下一条；delay 也要在等下一条时倒数
-        if self.current.is_none() {
-            if let Some((delay, _)) = self.pending.front_mut() {
-                *delay -= dt;
-                if *delay <= 0.0 {
-                    let (_, cue) = self.pending.pop_front().unwrap();
-                    self.current = Some((cue, 0.0));
+        // 循环消化所有 delay<=0 的 cue，把 Comm 类型立刻吐出（不占 current 槽），
+        // 直到遇到普通 cue 或 pending 空
+        while self.current.is_none() {
+            let Some((delay, _)) = self.pending.front_mut() else {
+                break;
+            };
+            *delay -= dt;
+            if *delay > 0.0 {
+                break;
+            }
+            let (_, cue) = self.pending.pop_front().unwrap();
+            if cue.style == CueStyle::Comm {
+                if let Some((w, m)) = cue.text.split_once('\x1F') {
+                    self.pending_emit_comms.push((w.to_string(), m.to_string()));
                 }
+                // 不占 current，继续 while 看下一条
+            } else {
+                self.current = Some((cue, 0.0));
             }
         }
     }

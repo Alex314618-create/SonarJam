@@ -1159,6 +1159,10 @@ impl GameApp {
             self.tick_pending_hud(dt);
             // 字幕：推进队列 + 监测能量阈值（Earth 模式才看能量；Ship 模式不消耗）
             self.narrative.tick(dt);
+            // narrative 排队的 Comm cue 到点 → 推入左下 COMMS（不抢中央弹窗）
+            for (who, msg) in self.narrative.drain_pending_comms() {
+                self.push_comm(who, msg);
+            }
             if self.mode == Mode::Earth {
                 self.narrative.check_energy(self.sonar.energy_ratio());
             }
@@ -1232,9 +1236,8 @@ impl GameApp {
             if !is_truth_phase(self.phase) {
                 self.ui.draw(&ctx);
             }
-            // 临时调试 HUD（坐标 + yaw）：左上小字，方便 PA 排查 spawn / marker 位置；
-            // 真相阶段全屏摘掉。
-            if !is_truth_phase(self.phase) {
+            // 坐标 HUD 已撤（spawn 调好了），DEV 模式才显
+            if self.dev_mode {
                 draw_coord_hud(&self.player);
             }
             // 低电量红色视野闪烁（< 30% Earth 模式）+ 周期警告
